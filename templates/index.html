@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Civil Service Jobs Explorer | Advanced Filters & Daily Monitor</title>
+    <meta name="description" content="UK Civil Service Jobs dashboard with multi-facet filters for location, role type, department, salary scale, job grade, working pattern, and contract type.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="dark-theme">
+    <!-- Ambient Background Glows -->
+    <div class="glow-orb glow-top-left"></div>
+    <div class="glow-orb glow-bottom-right"></div>
+
+    <header class="app-header">
+        <div class="header-container">
+            <div class="brand-group">
+                <div class="brand-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+                        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="brand-title">Civil Service Jobs Explorer</h1>
+                    <p class="brand-subtitle">Automated Daily Scraper & Enhanced Multi-Filter Monitor</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button id="themeToggleBtn" class="btn btn-secondary icon-btn" title="Toggle Light/Dark Theme">
+                    <span class="theme-icon">🌙</span>
+                </button>
+                <button id="enrichBtn" class="btn btn-secondary" title="Fetch full vacancy details (grade, contract, patterns) in background">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+                    </svg>
+                    <span>Enrich Details</span>
+                </button>
+                <button id="triggerScrapeBtn" class="btn btn-primary glow-btn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                    </svg>
+                    <span>Run Scraper Now</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <!-- Live Scraper Status Banner -->
+        <section id="scraperStatusBanner" class="scraper-banner hidden">
+            <div class="banner-content">
+                <div class="spinner"></div>
+                <div class="banner-text">
+                    <strong id="bannerTitle">Scraping in progress...</strong>
+                    <span id="bannerDetails">Connecting to Civil Service portal and solving anti-bot challenge...</span>
+                </div>
+            </div>
+            <div class="banner-stats" id="bannerLiveStats">
+                <span class="badge badge-info">Pages: <strong id="livePages">0</strong></span>
+                <span class="badge badge-success">New: <strong id="liveNew">0</strong></span>
+            </div>
+        </section>
+
+        <!-- Metrics Overview Cards -->
+        <section class="metrics-grid">
+            <div class="metric-card" id="cardTotalJobs">
+                <div class="metric-icon-wrap icon-primary">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                    </svg>
+                </div>
+                <div class="metric-info">
+                    <span class="metric-label">Total Tracked Jobs</span>
+                    <h2 class="metric-value" id="statTotalJobs">--</h2>
+                    <span class="metric-sub">Stored in SQLite database</span>
+                </div>
+            </div>
+
+            <div class="metric-card" id="cardNewToday">
+                <div class="metric-icon-wrap icon-success">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 14 14"></polyline>
+                    </svg>
+                </div>
+                <div class="metric-info">
+                    <span class="metric-label">New Jobs Today</span>
+                    <h2 class="metric-value text-gradient-success" id="statNewToday">--</h2>
+                    <span class="metric-sub">First seen on current date</span>
+                </div>
+            </div>
+
+            <div class="metric-card" id="cardDepartments">
+                <div class="metric-icon-wrap icon-warning">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                        <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                    </svg>
+                </div>
+                <div class="metric-info">
+                    <span class="metric-label">Gov Departments</span>
+                    <h2 class="metric-value" id="statDepartments">--</h2>
+                    <span class="metric-sub">Active departments & agencies</span>
+                </div>
+            </div>
+
+            <div class="metric-card" id="cardLastRun">
+                <div class="metric-icon-wrap icon-info">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 14 14"></polyline>
+                    </svg>
+                </div>
+                <div class="metric-info">
+                    <span class="metric-label">Last Automated Run</span>
+                    <h2 class="metric-value" id="statLastRunTime">--</h2>
+                    <span class="metric-sub" id="statLastRunMeta">Status: Idle</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Two-Column Workspace: Left Sidebar Filter Panel + Right Content Area -->
+        <div class="layout-container">
+            <!-- Filter Search Sidebar (Matching Portal Screenshot Structure) -->
+            <aside class="sidebar-panel glass-card">
+                <div class="sidebar-header">
+                    <h2 class="sidebar-title">Filter search</h2>
+                    <button id="resetAllFiltersBtn" class="link-btn" title="Reset all filters">Clear all</button>
+                </div>
+
+                <div class="filter-accordions">
+                    <!-- 1. Location filters -->
+                    <details class="accordion-item" open>
+                        <summary class="accordion-header">
+                            <span class="accordion-title">Location filters</span>
+                            <span class="accordion-sub" id="summaryLocation">Any location</span>
+                            <span class="accordion-icon">&rsaquo;</span>
+                        </summary>
+                        <div class="accordion-body">
+                            <input type="text" id="filterLocationInput" class="form-control" placeholder="City, postcode or region (e.g. London, Glasgow)...">
+                            <div class="quick-loc-chips">
+                                <span class="chip-sm" data-loc="London">London</span>
+                                <span class="chip-sm" data-loc="Manchester">Manchester</span>
+                                <span class="chip-sm" data-loc="Birmingham">Birmingham</span>
+                                <span class="chip-sm" data-loc="Bristol">Bristol</span>
+                                <span class="chip-sm" data-loc="Leeds">Leeds</span>
+                                <span class="chip-sm" data-loc="Scotland">Scotland</span>
+                                <span class="chip-sm" data-loc="Overseas">Overseas</span>
+                            </div>
+                        </div>
+                    </details>
+
+                    <!-- 2. Type of role -->
+                    <details class="accordion-item" open>
+                        <summary class="accordion-header">
+                            <span class="accordion-title">Type of role</span>
+                            <span class="accordion-sub" id="summaryRole">No filters selected</span>
+                            <span class="accordion-icon">&rsaquo;</span>
+                        </summary>
+                        <div class="accordion-body">
+                            <select id="filterRoleSelect" class="form-control">
+                                <option value="">All Types of Role</option>
+                            </select>
+                        </div>
+                    </details>
+
+                    <!-- 3. Department -->
+                    <details class="accordion-item" open>
+                        <summary class="accordion-header">
+                            <span class="accordion-title">Department</span>
+                            <span class="accordion-sub" id="summaryDept">No filters selected</span>
+                            <span class="accordion-icon">&rsaquo;</span>
+                        </summary>
+                        <div class="accordion-body">
+                            <select id="filterDeptSelect" class="form-control">
+                                <option value="">All Departments</option>
+                            </select>
+                        </div>
+                    </details>
+
+                    <!-- 4. Salary / Salary scale -->
+                    <details class="accordion-item" open>
+                        <summary class="accordion-header">
+                            <span class="accordion-title">Salary</span>
+                            <span class="accordion-sub" id="summarySalary">no minimum, no maximum</span>
+                            <span class="accordion-icon">&rsaquo;</span>
+                        </summary>
+                        <div class="accordion-body">
+                            <div class="salary-inputs-row">
+                                <div class="form-group-half">
+                                    <label for="filterSalaryMin">Min Salary:</label>
+                                    <select id="filterSalaryMin" class="form-control">
+                                        <option value="">no minimum</option>
+                                        <option value="15000">£15,000</option>
+                                        <option value="20000">£20,000</option>
+                                        <option value="25000">£25,000</option>
+                                        <option value="30000">£30,000</option>
+                                        <option value="40000">£40,000</option>
+                                        <option value="50000">£50,000</option>
+                                        <option value="60000">£60,000</option>
+                                        <option value="75000">£75,000</option>
+                                        <option value="100000">£100,000</option>
+                                    </select>
+                                </div>
+                                <div class="form-group-half">
+                                    <label for="filterSalaryMax">Max Salary:</label>
+                                    <select id="filterSalaryMax" class="form-control">
+                                        <option value="">no maximum</option>
+                                        <option value="25000">£25,000</option>
+                                        <option value="30000">£30,000</option>
+                                        <option value="40000">£40,000</option>
+                                        <option value="50000">£50,000</option>
+                                        <option value="60000">£60,000</option>
+                                        <option value="75000">£75,000</option>
+                                        <option value="100000">£100,000</option>
+                                        <option value="150000">£150,000</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <!-- 5. Job grade -->
+                    <details class="accordion-item" open>
+                        <summary class="accordion-header">
+                            <span class="accordion-title">Job grade</span>
+                            <span class="accordion-sub" id="summaryGrade">No filters selected</span>
+                            <span class="accordion-icon">&rsaquo;</span>
+                        </summary>
+                        <div class="accordion-body">
+                            <select id="filterGradeSelect" class="form-control">
+                                <option value="">All Job Grades</option>
+                                <option value="Administrative Assistant">Administrative Assistant (AA)</option>
+                                <option value="Administrative Officer">Administrative Officer (AO)</option>
+                                <option value="Executive Officer">Executive Officer (EO)</option>
+                                <option value="Higher Executive Officer">Higher Executive Officer (HEO)</option>
+                                <option value="Senior Executive Officer">Senior Executive Officer (SEO)</option>
+                                <option value="Grade 7">Grade 7</option>
+                                <option value="Grade 6">Grade 6</option>
+                                <option value="SCS Pay Band 1">SCS Pay Band 1</option>
+                                <option value="SCS Pay Band 2">SCS Pay Band 2</option>
+                                <option value="SCS Pay Band 3">SCS Pay Band 3</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                    </details>
+
+                    <!-- 6. Working pattern -->
+                    <details class="accordion-item" open>
+                        <summary class="accordion-header">
+                            <span class="accordion-title">Working pattern</span>
+                            <span class="accordion-sub" id="summaryPattern">No filters selected</span>
+                            <span class="accordion-icon">&rsaquo;</span>
+                        </summary>
+                        <div class="accordion-body">
+                            <select id="filterPatternSelect" class="form-control">
+                                <option value="">All Working Patterns</option>
+                                <option value="Full-time">Full-time</option>
+                                <option value="Part-time">Part-time</option>
+                                <option value="Flexible working">Flexible working</option>
+                                <option value="Job share">Job share</option>
+                                <option value="Compressed hours">Compressed hours</option>
+                                <option value="Homeworking">Homeworking</option>
+                                <option value="Shift working">Shift working</option>
+                            </select>
+                        </div>
+                    </details>
+
+                    <!-- 7. Contract type -->
+                    <details class="accordion-item" open>
+                        <summary class="accordion-header">
+                            <span class="accordion-title">Contract type</span>
+                            <span class="accordion-sub" id="summaryContract">No filters selected</span>
+                            <span class="accordion-icon">&rsaquo;</span>
+                        </summary>
+                        <div class="accordion-body">
+                            <select id="filterContractSelect" class="form-control">
+                                <option value="">All Contract Types</option>
+                                <option value="Permanent">Permanent</option>
+                                <option value="Fixed term">Fixed term</option>
+                                <option value="Temporary">Temporary</option>
+                                <option value="Loan">Loan</option>
+                                <option value="Secondment">Secondment</option>
+                                <option value="Apprenticeship">Apprenticeship</option>
+                                <option value="Internship">Internship</option>
+                            </select>
+                        </div>
+                    </details>
+                </div>
+
+                <!-- Update Results Button (matching Portal green button from image) -->
+                <div class="sidebar-action-wrap">
+                    <button id="updateResultsBtn" class="btn-gov-green">Update results</button>
+                </div>
+            </aside>
+
+            <!-- Main Results Content Area -->
+            <div class="content-area">
+                <!-- Top Search & Quick Control Bar -->
+                <div class="filter-panel glass-card">
+                    <div class="filter-row">
+                        <div class="search-input-group">
+                            <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            <input type="text" id="searchInput" placeholder="Search keywords in title, reference, agency..." aria-label="Search jobs">
+                            <button id="clearSearchBtn" class="clear-btn hidden" title="Clear search">&times;</button>
+                        </div>
+
+                        <div class="filter-select-group">
+                            <select id="sortOrderSelect" aria-label="Sort order">
+                                <option value="first_seen_at:desc">Newest Added (First Seen)</option>
+                                <option value="first_seen_at:asc">Oldest Added</option>
+                                <option value="salary_max:desc">Salary: High to Low</option>
+                                <option value="salary_min:asc">Salary: Low to High</option>
+                                <option value="closing_date:asc">Closing Date (Earliest)</option>
+                                <option value="title:asc">Title (A-Z)</option>
+                            </select>
+                        </div>
+
+                        <div class="toggle-control-group">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="onlyNewTodayCheckbox">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span class="toggle-label">Only New Today</span>
+                        </div>
+                    </div>
+
+                    <div class="filter-summary-row">
+                        <div class="results-count-text">
+                            Showing <strong id="visibleJobsCount">0</strong> of <strong id="totalJobsCount">0</strong> vacancies matching criteria
+                        </div>
+                        <div class="quick-tags" id="quickTags"></div>
+                    </div>
+                </div>
+
+                <!-- Jobs Listing Grid -->
+                <section class="jobs-section">
+                    <div id="jobsLoadingIndicator" class="loading-state hidden">
+                        <div class="spinner-large"></div>
+                        <p>Filtering Civil Service jobs...</p>
+                    </div>
+
+                    <div id="jobsEmptyState" class="empty-state hidden">
+                        <div class="empty-icon">📂</div>
+                        <h3>No matching vacancies found</h3>
+                        <p>Try broadening your salary range, clearing specific filters, or searching for broader terms.</p>
+                        <button id="emptyResetBtn" class="btn btn-primary">Reset Filters</button>
+                    </div>
+
+                    <div id="jobsGrid" class="jobs-grid"></div>
+
+                    <!-- Pagination Bar -->
+                    <div id="paginationBar" class="pagination-bar glass-card">
+                        <button id="prevPageBtn" class="btn btn-secondary" disabled>
+                            &larr; Previous Page
+                        </button>
+                        <span class="pagination-info" id="paginationInfo">
+                            Page 1 of 1
+                        </span>
+                        <button id="nextPageBtn" class="btn btn-secondary" disabled>
+                            Next Page &rarr;
+                        </button>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- Scrape Audit Logs Section -->
+        <section class="logs-section glass-card">
+            <div class="logs-header">
+                <h3>Recent Scrape History</h3>
+                <span class="badge badge-info">Audit Trail</span>
+            </div>
+            <div class="table-responsive">
+                <table class="logs-table" id="logsTable">
+                    <thead>
+                        <tr>
+                            <th>Run Time</th>
+                            <th>Mode</th>
+                            <th>Pages Scraped</th>
+                            <th>Jobs Found</th>
+                            <th>New Added</th>
+                            <th>Duration</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logsTableBody">
+                        <tr><td colspan="7" class="text-center">Loading scrape history...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- Run Scraper Modal -->
+    <div id="scrapeModal" class="modal-backdrop hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Run Civil Service Scraper</h3>
+                <button id="closeModalBtn" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-desc">
+                    Trigger an immediate scrape run against the UK Civil Service portal.
+                </p>
+                <div class="form-group">
+                    <label for="scrapeModeSelect">Scrape Mode:</label>
+                    <select id="scrapeModeSelect" class="form-control">
+                        <option value="incremental" selected>Incremental (Scrapes only newly posted jobs, halts on known jobs)</option>
+                        <option value="full">Full Scrape (Scrapes all pages up to max limit)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="maxPagesInput">Max Pages (Optional limit, leave blank for full search):</label>
+                    <input type="number" id="maxPagesInput" class="form-control" placeholder="e.g. 5 (Leave blank for full search)" min="1" max="100">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="cancelModalBtn" class="btn btn-secondary">Cancel</button>
+                <button id="confirmScrapeBtn" class="btn btn-primary glow-btn">Start Scraping</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Details Enrichment Modal -->
+    <div id="enrichModal" class="modal-backdrop hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Enrich Vacancy Details</h3>
+                <button id="closeEnrichModalBtn" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-desc">
+                    Fetch full vacancy details (Job grade, Contract type, Working pattern, Type of role) directly from each job's advert page.
+                </p>
+                <div class="form-group">
+                    <label for="enrichLimitInput">Number of vacancies to enrich:</label>
+                    <select id="enrichLimitInput" class="form-control">
+                        <option value="100" selected>100 vacancies (~15 seconds)</option>
+                        <option value="250">250 vacancies (~35 seconds)</option>
+                        <option value="500">500 vacancies (~1 minute)</option>
+                        <option value="1500">All remaining vacancies</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="cancelEnrichModalBtn" class="btn btn-secondary">Cancel</button>
+                <button id="confirmEnrichBtn" class="btn btn-primary glow-btn">Start Enrichment</button>
+            </div>
+        </div>
+    </div>
+
+    <footer class="app-footer">
+        <p>Civil Service Jobs Daily Scraper &bull; Built with Python, SQLite & Vanilla CSS &bull; Auto-syncs daily at 08:00 AM</p>
+    </footer>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

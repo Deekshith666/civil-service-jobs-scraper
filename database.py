@@ -1,0 +1,579 @@
+"""Database management for Civil Service Jobs Scraper using SQLite."""
+
+import re
+import sqlite3
+from datetime import datetime, date
+from typing import Dict, List, Optional, Set, Tuple
+from config import DB_PATH
+
+
+def parse_salary_range(salary_str: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
+    """
+    Extract numeric minimum and maximum annual salary (GBP) from salary text.
+    Handles formats like:
+      - '£30,485' -> (30485, 30485)
+      - '£45,544 to £49,523' -> (45544, 49523)
+      - '£35,000 - £42,000 p.a.' -> (35000, 42000)
+      - '£12.50 per hour' / 'Competitive' -> (None, None)
+    """
+    if not salary_str:
+        return None, None
+
+    cleaned = salary_str.replace(",", "")
+    # Find all 4 to 7 digit numbers (annual salary range typically £15,000 - £250,000)
+    matches = [int(m) for m in re.findall(r"(?:£\s*|\b)([1-9]\d{3,6})\b", cleaned)]
+    # Filter out year numbers like 2024, 2025, 2026, 2027 if they somehow matched
+    valid_salaries = [m for m in matches if m < 2000 or m > 2035]
+
+    if not valid_salaries:
+        return None, None
+
+    return min(valid_salaries), max(valid_salaries)
+
+
+def get_db_connection() -> sqlite3.Connection:
+    """Create and return a database connection with row factory enabled."""
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    """Initialize database tables, columns, and indexes."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Base Jobs table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                reference_number TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                department TEXT,
+                location TEXT,
+                salary TEXT,
+                salary_min INTEGER,
+                salary_max INTEGER,
+                job_grade TEXT,
+                role_type TEXT,
+                working_pattern TEXT,
+                contract_type TEXT,
+                closing_date TEXT,
+                job_url TEXT,
+                logo_url TEXT,
+                first_seen_at TEXT NOT NULL,
+                last_scraped_at TEXT NOT NULL
+            )
+        """)
+        
+        # Check for and apply schema migrations for existing DBs
+        cursor.execute("PRAGMA table_info(jobs)")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+        
+        new_columns = [
+            ("salary_min", "INTEGER"),
+            ("salary_max", "INTEGER"),
+            ("job_grade", "TEXT"),
+            ("role_type", "TEXT"),
+            ("working_pattern", "TEXT"),
+            ("contract_type", "TEXT"),
+        ]
+        
+        for col_name, col_type in new_columns:
+            if col_name not in existing_cols:
+                cursor.execute(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_type}")
+        
+        # Scrape runs audit log
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scrape_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_at TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                pages_scraped INTEGER DEFAULT 0,
+                jobs_found INTEGER DEFAULT 0,
+                new_jobs_added INTEGER DEFAULT 0,
+                duration_seconds REAL DEFAULT 0.0,
+                status TEXT DEFAULT 'success',
+                error_message TEXT
+            )
+        """)
+        
+        # Indexes for fast querying & filtering
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_dept ON jobs(department)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_closing ON jobs(closing_date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_salary_min ON jobs(salary_min)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_salary_max ON jobs(salary_max)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_grade ON jobs(job_grade)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_role ON jobs(role_type)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_contract ON jobs(contract_type)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_pattern ON jobs(working_pattern)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_run_at ON scrape_logs(run_at)")
+        
+        conn.commit()
+
+
+def backfill_salary_ranges():
+    """Calculate and store salary_min and salary_max for jobs with raw salary text."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT reference_number, salary FROM jobs WHERE salary IS NOT NULL AND salary != '' AND (salary_min IS NULL OR salary_max IS NULL)")
+        rows = cursor.fetchall()
+        
+        updated = 0
+        for ref, sal_text in rows:
+            s_min, s_max = parse_salary_range(sal_text)
+            if s_min is not None or s_max is not None:
+                cursor.execute(
+                    "UPDATE jobs SET salary_min = ?, salary_max = ? WHERE reference_number = ?",
+                    (s_min, s_max, ref)
+                )
+                updated += 1
+        conn.commit()
+        return updated
+
+
+def job_exists(reference_number: str) -> bool:
+    """Check if a job reference number already exists in the database."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM jobs WHERE reference_number = ? LIMIT 1", (reference_number,))
+        return cursor.fetchone() is not None
+
+
+def get_existing_references() -> Set[str]:
+    """Retrieve all existing job reference numbers for fast in-memory lookups."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT reference_number FROM jobs")
+        return {row[0] for row in cursor.fetchall()}
+
+
+def upsert_job(job_data: Dict) -> bool:
+    """
+    Insert or update a job record including enhanced filter fields.
+    Returns True if a new job was inserted, False if it was updated.
+    """
+    now_iso = datetime.now().isoformat()
+    ref = str(job_data.get("reference_number", "")).strip()
+    if not ref:
+        return False
+
+    # Compute salary min/max if not explicitly passed
+    s_min = job_data.get("salary_min")
+    s_max = job_data.get("salary_max")
+    if s_min is None and s_max is None and job_data.get("salary"):
+        s_min, s_max = parse_salary_range(job_data.get("salary"))
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT first_seen_at FROM jobs WHERE reference_number = ?", (ref,))
+        existing = cursor.fetchone()
+
+        if existing:
+            # Update existing job
+            cursor.execute("""
+                UPDATE jobs SET
+                    title = ?,
+                    department = ?,
+                    location = ?,
+                    salary = ?,
+                    salary_min = COALESCE(?, salary_min),
+                    salary_max = COALESCE(?, salary_max),
+                    job_grade = COALESCE(?, job_grade),
+                    role_type = COALESCE(?, role_type),
+                    working_pattern = COALESCE(?, working_pattern),
+                    contract_type = COALESCE(?, contract_type),
+                    closing_date = ?,
+                    job_url = ?,
+                    logo_url = ?,
+                    last_scraped_at = ?
+                WHERE reference_number = ?
+            """, (
+                job_data.get("title", ""),
+                job_data.get("department", ""),
+                job_data.get("location", ""),
+                job_data.get("salary", ""),
+                s_min,
+                s_max,
+                job_data.get("job_grade"),
+                job_data.get("role_type"),
+                job_data.get("working_pattern"),
+                job_data.get("contract_type"),
+                job_data.get("closing_date", ""),
+                job_data.get("job_url", ""),
+                job_data.get("logo_url", ""),
+                now_iso,
+                ref
+            ))
+            conn.commit()
+            return False
+        else:
+            # Insert new job
+            cursor.execute("""
+                INSERT INTO jobs (
+                    reference_number, title, department, location,
+                    salary, salary_min, salary_max,
+                    job_grade, role_type, working_pattern, contract_type,
+                    closing_date, job_url, logo_url,
+                    first_seen_at, last_scraped_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                ref,
+                job_data.get("title", ""),
+                job_data.get("department", ""),
+                job_data.get("location", ""),
+                job_data.get("salary", ""),
+                s_min,
+                s_max,
+                job_data.get("job_grade"),
+                job_data.get("role_type"),
+                job_data.get("working_pattern"),
+                job_data.get("contract_type"),
+                job_data.get("closing_date", ""),
+                job_data.get("job_url", ""),
+                job_data.get("logo_url", ""),
+                now_iso,
+                now_iso
+            ))
+            conn.commit()
+            return True
+
+
+def update_job_metadata(ref: str, metadata: Dict) -> bool:
+    """Update detailed metadata fields for an existing job."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE jobs SET
+                job_grade = COALESCE(?, job_grade),
+                role_type = COALESCE(?, role_type),
+                working_pattern = COALESCE(?, working_pattern),
+                contract_type = COALESCE(?, contract_type)
+            WHERE reference_number = ?
+        """, (
+            metadata.get("job_grade"),
+            metadata.get("role_type"),
+            metadata.get("working_pattern"),
+            metadata.get("contract_type"),
+            ref
+        ))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_jobs(
+    search: str = "",
+    department: str = "",
+    location: str = "",
+    min_salary: Optional[int] = None,
+    max_salary: Optional[int] = None,
+    job_grade: str = "",
+    role_type: str = "",
+    working_pattern: str = "",
+    contract_type: str = "",
+    only_new_today: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+    sort_by: str = "first_seen_at",
+    sort_order: str = "desc"
+) -> List[Dict]:
+    """Retrieve jobs with full multi-facet filtering, salary range, sorting, and pagination."""
+    query = "SELECT * FROM jobs WHERE 1=1"
+    params: List = []
+
+    if search:
+        query += " AND (title LIKE ? OR department LIKE ? OR location LIKE ? OR reference_number LIKE ?)"
+        s_pattern = f"%{search}%"
+        params.extend([s_pattern, s_pattern, s_pattern, s_pattern])
+
+    if department:
+        query += " AND department = ?"
+        params.append(department)
+
+    if location:
+        query += " AND location LIKE ?"
+        params.append(f"%{location}%")
+
+    if min_salary is not None and min_salary > 0:
+        # Matches jobs where maximum salary >= user minimum (or min salary >= user minimum)
+        query += " AND (salary_max >= ? OR (salary_max IS NULL AND salary_min >= ?))"
+        params.extend([min_salary, min_salary])
+
+    if max_salary is not None and max_salary > 0:
+        # Matches jobs where minimum salary <= user maximum (or max salary <= user maximum)
+        query += " AND (salary_min <= ? OR (salary_min IS NULL AND salary_max <= ?))"
+        params.extend([max_salary, max_salary])
+
+    if job_grade:
+        query += " AND job_grade LIKE ?"
+        params.append(f"%{job_grade}%")
+
+    if role_type:
+        query += " AND role_type LIKE ?"
+        params.append(f"%{role_type}%")
+
+    if working_pattern:
+        query += " AND working_pattern LIKE ?"
+        params.append(f"%{working_pattern}%")
+
+    if contract_type:
+        query += " AND contract_type LIKE ?"
+        params.append(f"%{contract_type}%")
+
+    if only_new_today:
+        today_prefix = date.today().isoformat() + "%"
+        query += " AND first_seen_at LIKE ?"
+        params.append(today_prefix)
+
+    # Sort validation
+    allowed_sorts = {
+        "first_seen_at": "first_seen_at",
+        "closing_date": "closing_date",
+        "title": "title",
+        "department": "department",
+        "salary_min": "salary_min",
+        "salary_max": "salary_max",
+    }
+    safe_sort = allowed_sorts.get(sort_by, "first_seen_at")
+    safe_order = "ASC" if sort_order.lower() == "asc" else "DESC"
+
+    query += f" ORDER BY {safe_sort} {safe_order} LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def count_jobs(
+    search: str = "",
+    department: str = "",
+    location: str = "",
+    min_salary: Optional[int] = None,
+    max_salary: Optional[int] = None,
+    job_grade: str = "",
+    role_type: str = "",
+    working_pattern: str = "",
+    contract_type: str = "",
+    only_new_today: bool = False
+) -> int:
+    """Count total jobs matching all current filter conditions."""
+    query = "SELECT COUNT(*) FROM jobs WHERE 1=1"
+    params: List = []
+
+    if search:
+        query += " AND (title LIKE ? OR department LIKE ? OR location LIKE ? OR reference_number LIKE ?)"
+        s_pattern = f"%{search}%"
+        params.extend([s_pattern, s_pattern, s_pattern, s_pattern])
+
+    if department:
+        query += " AND department = ?"
+        params.append(department)
+
+    if location:
+        query += " AND location LIKE ?"
+        params.append(f"%{location}%")
+
+    if min_salary is not None and min_salary > 0:
+        query += " AND (salary_max >= ? OR (salary_max IS NULL AND salary_min >= ?))"
+        params.extend([min_salary, min_salary])
+
+    if max_salary is not None and max_salary > 0:
+        query += " AND (salary_min <= ? OR (salary_min IS NULL AND salary_max <= ?))"
+        params.extend([max_salary, max_salary])
+
+    if job_grade:
+        query += " AND job_grade LIKE ?"
+        params.append(f"%{job_grade}%")
+
+    if role_type:
+        query += " AND role_type LIKE ?"
+        params.append(f"%{role_type}%")
+
+    if working_pattern:
+        query += " AND working_pattern LIKE ?"
+        params.append(f"%{working_pattern}%")
+
+    if contract_type:
+        query += " AND contract_type LIKE ?"
+        params.append(f"%{contract_type}%")
+
+    if only_new_today:
+        today_prefix = date.today().isoformat() + "%"
+        query += " AND first_seen_at LIKE ?"
+        params.append(today_prefix)
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        return cursor.fetchone()[0]
+
+
+def get_departments() -> List[str]:
+    """Get unique list of departments."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT department FROM jobs WHERE department IS NOT NULL AND department != '' ORDER BY department ASC")
+        return [row[0] for row in cursor.fetchall()]
+
+
+def get_job_grades() -> List[str]:
+    """Get unique list of job grades."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT job_grade FROM jobs WHERE job_grade IS NOT NULL AND job_grade != '' ORDER BY job_grade ASC")
+        return [row[0] for row in cursor.fetchall()]
+
+
+def get_role_types() -> List[str]:
+    """Get unique list of role types."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT role_type FROM jobs WHERE role_type IS NOT NULL AND role_type != '' ORDER BY role_type ASC")
+        # Role types can be comma separated
+        unique_roles = set()
+        for row in cursor.fetchall():
+            for role in row[0].split(","):
+                clean = role.strip()
+                if clean:
+                    unique_roles.add(clean)
+        return sorted(list(unique_roles))
+
+
+def get_contract_types() -> List[str]:
+    """Get unique list of contract types."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT contract_type FROM jobs WHERE contract_type IS NOT NULL AND contract_type != '' ORDER BY contract_type ASC")
+        unique_contracts = set()
+        for row in cursor.fetchall():
+            for c in row[0].split(","):
+                clean = c.strip()
+                if clean:
+                    unique_contracts.add(clean)
+        return sorted(list(unique_contracts))
+
+
+def get_working_patterns() -> List[str]:
+    """Get unique list of working patterns."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT working_pattern FROM jobs WHERE working_pattern IS NOT NULL AND working_pattern != '' ORDER BY working_pattern ASC")
+        unique_patterns = set()
+        for row in cursor.fetchall():
+            for p in row[0].split(","):
+                clean = p.strip()
+                if clean:
+                    unique_patterns.add(clean)
+        return sorted(list(unique_patterns))
+
+
+def get_filter_options() -> Dict:
+    """Retrieve all available facet filter options in a single call."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT MIN(salary_min), MAX(salary_max) FROM jobs WHERE salary_min > 0")
+        min_s, max_s = cursor.fetchone()
+        
+    return {
+        "departments": get_departments(),
+        "job_grades": get_job_grades(),
+        "role_types": get_role_types(),
+        "contract_types": get_contract_types(),
+        "working_patterns": get_working_patterns(),
+        "salary_range": {
+            "min": min_s or 15000,
+            "max": max_s or 150000
+        }
+    }
+
+
+def get_jobs_missing_details(limit: int = 50) -> List[Dict]:
+    """Return jobs that have not yet had their detail page metadata scraped."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT reference_number, job_url, title
+            FROM jobs
+            WHERE job_grade IS NULL OR role_type IS NULL OR contract_type IS NULL
+            LIMIT ?
+        """, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def count_jobs_missing_details() -> int:
+    """Count jobs that do not yet have detail metadata."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) FROM jobs
+            WHERE job_grade IS NULL OR role_type IS NULL OR contract_type IS NULL
+        """)
+        return cursor.fetchone()[0]
+
+
+def get_dashboard_stats() -> Dict:
+    """Calculate aggregate statistics for dashboard metrics."""
+    today_prefix = date.today().isoformat() + "%"
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(*) FROM jobs")
+        total_jobs = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM jobs WHERE first_seen_at LIKE ?", (today_prefix,))
+        new_jobs_today = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(DISTINCT department) FROM jobs WHERE department IS NOT NULL AND department != ''")
+        departments_count = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT * FROM scrape_logs ORDER BY id DESC LIMIT 1")
+        last_log = cursor.fetchone()
+        last_run = dict(last_log) if last_log else None
+        
+        return {
+            "total_jobs": total_jobs,
+            "new_jobs_today": new_jobs_today,
+            "departments_count": departments_count,
+            "last_run": last_run
+        }
+
+
+def log_scrape_run(
+    mode: str,
+    pages_scraped: int,
+    jobs_found: int,
+    new_jobs_added: int,
+    duration_seconds: float,
+    status: str = "success",
+    error_message: Optional[str] = None
+) -> int:
+    """Record scrape run outcome."""
+    now_iso = datetime.now().isoformat()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO scrape_logs (
+                run_at, mode, pages_scraped, jobs_found,
+                new_jobs_added, duration_seconds, status, error_message
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            now_iso, mode, pages_scraped, jobs_found,
+            new_jobs_added, duration_seconds, status, error_message
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_recent_logs(limit: int = 10) -> List[Dict]:
+    """Retrieve recent scrape logs."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM scrape_logs ORDER BY id DESC LIMIT ?", (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+# Run initialization on import
+init_db()

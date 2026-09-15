@@ -1,0 +1,22 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# macOS System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs & temp
+*.log
+data/cron.log
+
+# IDE & Editor
+.vscode/
+.idea/
