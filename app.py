@@ -93,6 +93,20 @@ def _run_enrichment_task(limit: Optional[int], max_workers: int):
         active_enrich_state["is_running"] = False
 
 
+@app.get("/static/css/style.css")
+async def serve_css():
+    """Explicit static handler for main stylesheet."""
+    css_path = os.path.join(STATIC_DIR, "css", "style.css")
+    return FileResponse(css_path, media_type="text/css")
+
+
+@app.get("/static/js/app.js")
+async def serve_js():
+    """Explicit static handler for client controller."""
+    js_path = os.path.join(STATIC_DIR, "js", "app.js")
+    return FileResponse(js_path, media_type="application/javascript")
+
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
     """Serve the main interactive dashboard UI."""
