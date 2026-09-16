@@ -556,6 +556,13 @@ async function triggerScraper() {
             startScraperPolling();
         } else if (data.status === 'busy') {
             alert('A scraper run is already in progress.');
+            hideScraperBanner();
+        } else if (data.status === 'disabled') {
+            alert(data.message || 'Live scraping is disabled in the Vercel serverless environment.');
+            hideScraperBanner();
+        } else {
+            alert(data.message || 'Could not start scrape run.');
+            hideScraperBanner();
         }
     } catch (err) {
         console.error('Error starting scrape:', err);

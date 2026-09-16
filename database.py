@@ -1,10 +1,25 @@
 """Database management for Civil Service Jobs Scraper using SQLite."""
 
+import os
 import re
 import sqlite3
+import logging
+from pathlib import Path
 from datetime import datetime, date
 from typing import Dict, List, Optional, Set, Tuple
 from config import DB_PATH
+
+logger = logging.getLogger(__name__)
+
+
+def is_database_writable() -> bool:
+    """Check if the configured SQLite database file and directory can be written to."""
+    try:
+        if DB_PATH.exists():
+            return os.access(str(DB_PATH), os.W_OK) and os.access(str(DB_PATH.parent), os.W_OK)
+        return os.access(str(DB_PATH.parent), os.W_OK)
+    except Exception:
+        return False
 
 
 def parse_salary_range(salary_str: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
@@ -33,15 +48,37 @@ def parse_salary_range(salary_str: Optional[str]) -> Tuple[Optional[int], Option
 
 def get_db_connection() -> sqlite3.Connection:
     """Create and return a database connection with row factory enabled."""
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    return conn
+    db_file_str = str(DB_PATH)
+
+    # If the target database is read-only, connect using immutable URI mode
+    if not is_database_writable():
+        uri_path = Path(db_file_str).resolve().as_posix()
+        conn = sqlite3.connect(f"file:{uri_path}?mode=ro&immutable=1", uri=True)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    try:
+        conn = sqlite3.connect(db_file_str)
+        conn.row_factory = sqlite3.Row
+        return conn
+    except sqlite3.OperationalError as e:
+        if "readonly" in str(e).lower() or "attempt to write" in str(e).lower() or "unable to open" in str(e).lower():
+            uri_path = Path(db_file_str).resolve().as_posix()
+            conn = sqlite3.connect(f"file:{uri_path}?mode=ro&immutable=1", uri=True)
+            conn.row_factory = sqlite3.Row
+            return conn
+        raise
 
 
 def init_db():
     """Initialize database tables, columns, and indexes."""
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
+    if not is_database_writable():
+        logger.warning("Database path is read-only (e.g. Vercel deployment). Skipping schema initialization.")
+        return
+
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
         
         # Base Jobs table
         cursor.execute("""
@@ -110,6 +147,11 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_run_at ON scrape_logs(run_at)")
         
         conn.commit()
+    except sqlite3.OperationalError as e:
+        if "readonly" in str(e).lower() or "attempt to write" in str(e).lower():
+            logger.warning(f"Database write rejected: {e}. Skipping schema initialization.")
+        else:
+            raise
 
 
 def backfill_salary_ranges():
@@ -575,5 +617,11 @@ def get_recent_logs(limit: int = 10) -> List[Dict]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-# Run initialization on import
-init_db()
+# Run initialization on import only if the database is writable
+try:
+    if is_database_writable():
+        init_db()
+    else:
+        logger.info("Skipping database initialization on read-only environment.")
+except Exception as e:
+    logger.warning(f"Database initialization deferred or skipped: {e}")

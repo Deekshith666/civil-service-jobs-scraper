@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
 
+import config
 import database
 from scraper import CivilServiceScraper
 
@@ -119,6 +120,8 @@ async def get_stats():
     """Return dashboard summary metrics."""
     stats = database.get_dashboard_stats()
     stats["missing_details"] = database.count_jobs_missing_details()
+    stats["is_vercel"] = config.IS_VERCEL
+    stats["is_writable"] = database.is_database_writable()
     return stats
 
 
@@ -218,6 +221,12 @@ class ScrapeRequest(BaseModel):
 async def trigger_scrape(request: ScrapeRequest, background_tasks: BackgroundTasks):
     """Trigger an on-demand scraper run."""
     global active_scrape_state
+    if config.IS_VERCEL:
+        return {
+            "status": "disabled",
+            "message": "Live background scraping is disabled on Vercel Serverless Functions due to execution timeouts (10s limit). Please run scrapes locally (python main.py scrape) or via scheduled GitHub Actions."
+        }
+
     if active_scrape_state["is_running"]:
         return {"status": "busy", "message": "A scrape run is already in progress."}
 
@@ -240,6 +249,12 @@ class EnrichRequest(BaseModel):
 async def trigger_enrichment(request: EnrichRequest, background_tasks: BackgroundTasks):
     """Trigger background enrichment of job details (grades, roles, contracts, patterns)."""
     global active_enrich_state
+    if config.IS_VERCEL:
+        return {
+            "status": "disabled",
+            "message": "Live vacancy enrichment is disabled on Vercel Serverless Functions due to execution timeouts. Please run enrichment locally (python main.py enrich) or on persistent servers."
+        }
+
     if active_enrich_state["is_running"]:
         return {"status": "busy", "message": "Enrichment is already in progress."}
 

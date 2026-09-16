@@ -1,12 +1,41 @@
 """Configuration settings for Civil Service Jobs Scraper."""
 
+import os
+import shutil
 from pathlib import Path
 
 # Base Paths
 PROJECT_DIR = Path(__file__).resolve().parent
-DATA_DIR = PROJECT_DIR / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = DATA_DIR / "jobs.db"
+BUNDLED_DATA_DIR = PROJECT_DIR / "data"
+BUNDLED_DB_PATH = BUNDLED_DATA_DIR / "jobs.db"
+
+# Environment Detection (Vercel Serverless / AWS Lambda)
+IS_VERCEL = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+
+if IS_VERCEL:
+    # On Vercel, the application bundle (/var/task) is mounted strictly read-only.
+    # The only writable directory is /tmp.
+    DATA_DIR = Path("/tmp/civil_service_data")
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    DB_PATH = DATA_DIR / "jobs.db"
+
+    # Seed the writable /tmp database from the bundled jobs.db on cold start
+    if BUNDLED_DB_PATH.exists() and (not DB_PATH.exists() or DB_PATH.stat().st_size == 0):
+        try:
+            shutil.copyfile(BUNDLED_DB_PATH, DB_PATH)
+        except Exception:
+            # Fallback to bundled DB in case copying fails
+            DB_PATH = BUNDLED_DB_PATH
+else:
+    DATA_DIR = BUNDLED_DATA_DIR
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    DB_PATH = DATA_DIR / "jobs.db"
 
 # URLs
 BASE_URL = "https://www.civilservicejobs.service.gov.uk"
