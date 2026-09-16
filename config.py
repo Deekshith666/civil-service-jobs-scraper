@@ -48,7 +48,15 @@ if IS_VERCEL:
     JOBS_DB_PATH = BUNDLED_DB_PATH
     
     # 2. User Store: isolated in writable storage (or cloud database)
+    BUNDLED_USERS_DB_PATH = BUNDLED_DATA_DIR / "users.db"
     USERS_DB_PATH = DATA_DIR / "users.db"
+
+    # Seed the writable /tmp users database from the bundled users.db on cold start
+    if BUNDLED_USERS_DB_PATH.exists() and (not USERS_DB_PATH.exists() or USERS_DB_PATH.stat().st_size == 0):
+        try:
+            shutil.copyfile(BUNDLED_USERS_DB_PATH, USERS_DB_PATH)
+        except Exception:
+            pass
     
     # Backwards compatibility alias
     DB_PATH = JOBS_DB_PATH

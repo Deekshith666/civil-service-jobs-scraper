@@ -27,8 +27,11 @@ data/cron.log
 *.env
 !.env.example
 
-# User Data & Production Storage (Decoupled from scraped jobs catalog)
-data/users.db*
+# Temporary database lock & journal files
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
 data/*.sqlite3
+
 
 

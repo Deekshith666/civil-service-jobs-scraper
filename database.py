@@ -849,8 +849,8 @@ def authenticate_user(username_or_email: str, password: str) -> Optional[Dict]:
         cursor.execute("""
             SELECT id, username, email, password_hash, salt, created_at, preferences_json
             FROM users
-            WHERE username = ? OR email = ?
-        """, (term, term.lower()))
+            WHERE LOWER(username) = ? OR LOWER(email) = ?
+        """, (term.lower(), term.lower()))
         row = cursor.fetchone()
         if not row:
             return None
