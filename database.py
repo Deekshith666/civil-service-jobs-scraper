@@ -2,10 +2,13 @@
 
 import os
 import re
+import json
 import sqlite3
 import logging
+import hashlib
+import secrets
 from pathlib import Path
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 from config import DB_PATH
 
@@ -134,6 +137,44 @@ def init_db():
             )
         """)
         
+        # Users table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                preferences_json TEXT DEFAULT '{}'
+            )
+        """)
+
+        # User Resumes table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_resumes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                filename TEXT NOT NULL,
+                description TEXT NOT NULL,
+                file_content BLOB NOT NULL,
+                file_size INTEGER NOT NULL,
+                content_type TEXT NOT NULL,
+                is_primary INTEGER DEFAULT 0,
+                uploaded_at TEXT NOT NULL
+            )
+        """)
+
+        # User Sessions table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_sessions (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )
+        """)
+
         # Indexes for fast querying & filtering
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_dept ON jobs(department)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen_at)")
@@ -145,6 +186,11 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_contract ON jobs(contract_type)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_pattern ON jobs(working_pattern)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_run_at ON scrape_logs(run_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_resumes_user_id ON user_resumes(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(token)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id)")
         
         conn.commit()
     except sqlite3.OperationalError as e:
@@ -615,6 +661,315 @@ def get_recent_logs(limit: int = 10) -> List[Dict]:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM scrape_logs ORDER BY id DESC LIMIT ?", (limit,))
         return [dict(row) for row in cursor.fetchall()]
+
+
+# ==========================================
+# User Authentication & Profile Management
+# ==========================================
+
+def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
+    """Hash password using PBKDF2-HMAC-SHA256 with 100,000 iterations and salt."""
+    if not salt:
+        salt = secrets.token_hex(16)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000)
+    return key.hex(), salt
+
+
+def verify_password(password: str, password_hash: str, salt: str) -> bool:
+    """Verify password matches stored hash given salt."""
+    computed_hash, _ = hash_password(password, salt)
+    return secrets.compare_digest(computed_hash, password_hash)
+
+
+def create_user(
+    username: str,
+    email: str,
+    password: str,
+    resume_file: Optional[Dict] = None
+) -> Dict:
+    """Register a new user, optionally saving an initial uploaded resume."""
+    username = username.strip()
+    email = email.strip().lower()
+
+    if len(username) < 3:
+        raise ValueError("Username must be at least 3 characters long.")
+    if len(password) < 6:
+        raise ValueError("Password must be at least 6 characters long.")
+    if "@" not in email or "." not in email:
+        raise ValueError("Please provide a valid email address.")
+
+    pwd_hash, salt = hash_password(password)
+    now_iso = datetime.now().isoformat()
+    default_prefs = {
+        "locations": [],
+        "min_salary": None,
+        "max_salary": None,
+        "job_grade": "",
+        "role_type": "",
+        "working_pattern": "",
+        "contract_type": ""
+    }
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Check uniqueness
+        cursor.execute("SELECT id FROM users WHERE username = ? OR email = ?", (username, email))
+        if cursor.fetchone():
+            raise ValueError("Username or email is already registered.")
+
+        cursor.execute("""
+            INSERT INTO users (username, email, password_hash, salt, created_at, preferences_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (username, email, pwd_hash, salt, now_iso, json.dumps(default_prefs)))
+        user_id = cursor.lastrowid
+
+        # If an initial resume was uploaded during registration
+        if resume_file and resume_file.get("content"):
+            cursor.execute("""
+                INSERT INTO user_resumes (
+                    user_id, filename, description, file_content, file_size, content_type, is_primary, uploaded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+            """, (
+                user_id,
+                resume_file.get("filename", "resume.pdf"),
+                resume_file.get("description", "Primary Resume"),
+                resume_file.get("content"),
+                len(resume_file.get("content")),
+                resume_file.get("content_type", "application/pdf"),
+                now_iso
+            ))
+
+        conn.commit()
+
+        return {
+            "id": user_id,
+            "username": username,
+            "email": email,
+            "created_at": now_iso,
+            "preferences": default_prefs
+        }
+
+
+def authenticate_user(username_or_email: str, password: str) -> Optional[Dict]:
+    """Authenticate user with username/email and password."""
+    term = username_or_email.strip()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, username, email, password_hash, salt, created_at, preferences_json
+            FROM users
+            WHERE username = ? OR email = ?
+        """, (term, term.lower()))
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        if verify_password(password, row["password_hash"], row["salt"]):
+            prefs = json.loads(row["preferences_json"]) if row["preferences_json"] else {}
+            return {
+                "id": row["id"],
+                "username": row["username"],
+                "email": row["email"],
+                "created_at": row["created_at"],
+                "preferences": prefs
+            }
+        return None
+
+
+def create_session(user_id: int, days_valid: int = 30) -> str:
+    """Create a persistent user session token."""
+    token = secrets.token_hex(32)
+    now = datetime.now()
+    expires = now + timedelta(days=days_valid)
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO user_sessions (token, user_id, created_at, expires_at)
+            VALUES (?, ?, ?, ?)
+        """, (token, user_id, now.isoformat(), expires.isoformat()))
+        conn.commit()
+
+    return token
+
+
+def get_user_by_session(token: str) -> Optional[Dict]:
+    """Retrieve user details for an active session token."""
+    if not token:
+        return None
+    now_iso = datetime.now().isoformat()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT u.id, u.username, u.email, u.created_at, u.preferences_json
+            FROM user_sessions s
+            JOIN users u ON s.user_id = u.id
+            WHERE s.token = ? AND s.expires_at > ?
+        """, (token, now_iso))
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        cursor.execute("SELECT COUNT(*) as count FROM user_resumes WHERE user_id = ?", (row["id"],))
+        res_count = cursor.fetchone()["count"]
+
+        prefs = json.loads(row["preferences_json"]) if row["preferences_json"] else {}
+        return {
+            "id": row["id"],
+            "username": row["username"],
+            "email": row["email"],
+            "created_at": row["created_at"],
+            "preferences": prefs,
+            "resume_count": res_count
+        }
+
+
+def delete_session(token: str) -> bool:
+    """Invalidate a user session on logout."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM user_sessions WHERE token = ?", (token,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def update_user_preferences(user_id: int, preferences: Dict) -> Dict:
+    """Update search and job preferences for a user."""
+    prefs_json = json.dumps(preferences)
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET preferences_json = ? WHERE id = ?", (prefs_json, user_id))
+        conn.commit()
+    return preferences
+
+
+def add_user_resume(
+    user_id: int,
+    filename: str,
+    description: str,
+    file_content: bytes,
+    content_type: str,
+    is_primary: bool = False
+) -> Dict:
+    """Upload and store a new resume with a specific description."""
+    now_iso = datetime.now().isoformat()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # If user has no other resumes, automatically make this one primary
+        cursor.execute("SELECT COUNT(*) as cnt FROM user_resumes WHERE user_id = ?", (user_id,))
+        count = cursor.fetchone()["cnt"]
+        if count == 0:
+            is_primary = True
+
+        if is_primary:
+            cursor.execute("UPDATE user_resumes SET is_primary = 0 WHERE user_id = ?", (user_id,))
+
+        cursor.execute("""
+            INSERT INTO user_resumes (
+                user_id, filename, description, file_content, file_size, content_type, is_primary, uploaded_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            filename,
+            description or "My Resume",
+            file_content,
+            len(file_content),
+            content_type,
+            1 if is_primary else 0,
+            now_iso
+        ))
+        resume_id = cursor.lastrowid
+        conn.commit()
+
+        return {
+            "id": resume_id,
+            "user_id": user_id,
+            "filename": filename,
+            "description": description or "My Resume",
+            "file_size": len(file_content),
+            "content_type": content_type,
+            "is_primary": bool(is_primary),
+            "uploaded_at": now_iso
+        }
+
+
+def get_user_resumes(user_id: int) -> List[Dict]:
+    """Retrieve metadata of all resumes uploaded by a user (excludes large binary content for performance)."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, user_id, filename, description, file_size, content_type, is_primary, uploaded_at
+            FROM user_resumes
+            WHERE user_id = ?
+            ORDER BY is_primary DESC, id DESC
+        """, (user_id,))
+        rows = cursor.fetchall()
+        return [
+            {
+                "id": r["id"],
+                "user_id": r["user_id"],
+                "filename": r["filename"],
+                "description": r["description"],
+                "file_size": r["file_size"],
+                "content_type": r["content_type"],
+                "is_primary": bool(r["is_primary"]),
+                "uploaded_at": r["uploaded_at"]
+            }
+            for r in rows
+        ]
+
+
+def get_resume_by_id(resume_id: int, user_id: int) -> Optional[Dict]:
+    """Fetch full resume record including binary content for downloading."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, user_id, filename, description, file_content, file_size, content_type, is_primary, uploaded_at
+            FROM user_resumes
+            WHERE id = ? AND user_id = ?
+        """, (resume_id, user_id))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return dict(row)
+
+
+def delete_user_resume(resume_id: int, user_id: int) -> bool:
+    """Delete a resume for a user."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT is_primary FROM user_resumes WHERE id = ? AND user_id = ?", (resume_id, user_id))
+        row = cursor.fetchone()
+        if not row:
+            return False
+
+        was_primary = bool(row["is_primary"])
+        cursor.execute("DELETE FROM user_resumes WHERE id = ? AND user_id = ?", (resume_id, user_id))
+
+        if was_primary:
+            cursor.execute("""
+                UPDATE user_resumes
+                SET is_primary = 1
+                WHERE id = (SELECT id FROM user_resumes WHERE user_id = ? ORDER BY id DESC LIMIT 1)
+            """, (user_id,))
+
+        conn.commit()
+        return True
+
+
+def set_primary_resume(resume_id: int, user_id: int) -> bool:
+    """Set a specific resume as the primary/active one."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM user_resumes WHERE id = ? AND user_id = ?", (resume_id, user_id))
+        if not cursor.fetchone():
+            return False
+        cursor.execute("UPDATE user_resumes SET is_primary = 0 WHERE user_id = ?", (user_id,))
+        cursor.execute("UPDATE user_resumes SET is_primary = 1 WHERE id = ? AND user_id = ?", (resume_id, user_id))
+        conn.commit()
+        return True
 
 
 # Run initialization on import only if the database is writable

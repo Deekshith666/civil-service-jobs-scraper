@@ -99,7 +99,73 @@ const elements = {
     confirmEnrichBtn: document.getElementById('confirmEnrichBtn'),
     enrichLimitInput: document.getElementById('enrichLimitInput'),
     
-    themeToggleBtn: document.getElementById('themeToggleBtn')
+    themeToggleBtn: document.getElementById('themeToggleBtn'),
+
+    // Auth & Profile Header Elements
+    openAuthModalBtn: document.getElementById('openAuthModalBtn'),
+    loggedInUserPill: document.getElementById('loggedInUserPill'),
+    userAvatarLetter: document.getElementById('userAvatarLetter'),
+    headerUsername: document.getElementById('headerUsername'),
+    headerResumeBadge: document.getElementById('headerResumeBadge'),
+    openProfileModalBtn: document.getElementById('openProfileModalBtn'),
+    logoutBtn: document.getElementById('logoutBtn'),
+    matchProfileBtn: document.getElementById('matchProfileBtn'),
+
+    // Auth Modal Elements
+    authModal: document.getElementById('authModal'),
+    closeAuthModalBtn: document.getElementById('closeAuthModalBtn'),
+    authTabLogin: document.getElementById('authTabLogin'),
+    authTabRegister: document.getElementById('authTabRegister'),
+    loginForm: document.getElementById('loginForm'),
+    loginUsername: document.getElementById('loginUsername'),
+    loginPassword: document.getElementById('loginPassword'),
+    loginAlert: document.getElementById('loginAlert'),
+    loginSubmitBtn: document.getElementById('loginSubmitBtn'),
+
+    registerForm: document.getElementById('registerForm'),
+    regUsername: document.getElementById('regUsername'),
+    regEmail: document.getElementById('regEmail'),
+    regPassword: document.getElementById('regPassword'),
+    regResumeDropzone: document.getElementById('regResumeDropzone'),
+    regResumeInput: document.getElementById('regResumeInput'),
+    regDropzoneText: document.getElementById('regDropzoneText'),
+    regResumeFilePreview: document.getElementById('regResumeFilePreview'),
+    regFileName: document.getElementById('regFileName'),
+    regRemoveFileBtn: document.getElementById('regRemoveFileBtn'),
+    regResumeDesc: document.getElementById('regResumeDesc'),
+    registerAlert: document.getElementById('registerAlert'),
+    registerSubmitBtn: document.getElementById('registerSubmitBtn'),
+
+    // Profile & Resume Modal Elements
+    profileModal: document.getElementById('profileModal'),
+    closeProfileModalBtn: document.getElementById('closeProfileModalBtn'),
+    profileUserEmail: document.getElementById('profileUserEmail'),
+    tabResumesBtn: document.getElementById('tabResumesBtn'),
+    tabPreferencesBtn: document.getElementById('tabPreferencesBtn'),
+    panelResumes: document.getElementById('panelResumes'),
+    panelPreferences: document.getElementById('panelPreferences'),
+    profileResumeTabCount: document.getElementById('profileResumeTabCount'),
+
+    uploadResumeForm: document.getElementById('uploadResumeForm'),
+    uploadResumeAlert: document.getElementById('uploadResumeAlert'),
+    newResumeDesc: document.getElementById('newResumeDesc'),
+    newResumeFile: document.getElementById('newResumeFile'),
+    newResumePrimary: document.getElementById('newResumePrimary'),
+    submitUploadResumeBtn: document.getElementById('submitUploadResumeBtn'),
+    resumesListContainer: document.getElementById('resumesListContainer'),
+
+    // Preferences Elements
+    preferencesForm: document.getElementById('preferencesForm'),
+    prefAlert: document.getElementById('prefAlert'),
+    prefLocation: document.getElementById('prefLocation'),
+    prefMinSalary: document.getElementById('prefMinSalary'),
+    prefMaxSalary: document.getElementById('prefMaxSalary'),
+    prefRoleType: document.getElementById('prefRoleType'),
+    prefJobGrade: document.getElementById('prefJobGrade'),
+    prefWorkingPattern: document.getElementById('prefWorkingPattern'),
+    prefContractType: document.getElementById('prefContractType'),
+    savePreferencesBtn: document.getElementById('savePreferencesBtn'),
+    applyPreferencesToSearchBtn: document.getElementById('applyPreferencesToSearchBtn')
 };
 
 // Utilities
@@ -808,6 +874,600 @@ function setupEventListeners() {
             localStorage.setItem('theme', 'dark');
         }
     });
+
+    // Auth & Profile Event Listeners
+    if (elements.openAuthModalBtn) {
+        elements.openAuthModalBtn.addEventListener('click', () => openAuthModal('login'));
+    }
+    if (elements.closeAuthModalBtn) {
+        elements.closeAuthModalBtn.addEventListener('click', closeAuthModal);
+    }
+    if (elements.authTabLogin) {
+        elements.authTabLogin.addEventListener('click', () => switchAuthTab('login'));
+    }
+    if (elements.authTabRegister) {
+        elements.authTabRegister.addEventListener('click', () => switchAuthTab('register'));
+    }
+    if (elements.loginForm) {
+        elements.loginForm.addEventListener('submit', handleLogin);
+    }
+    if (elements.registerForm) {
+        elements.registerForm.addEventListener('submit', handleRegister);
+    }
+
+    // Register Resume Dropzone
+    if (elements.regResumeDropzone) {
+        elements.regResumeDropzone.addEventListener('click', () => elements.regResumeInput.click());
+        elements.regResumeDropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            elements.regResumeDropzone.classList.add('dragover');
+        });
+        elements.regResumeDropzone.addEventListener('dragleave', () => {
+            elements.regResumeDropzone.classList.remove('dragover');
+        });
+        elements.regResumeDropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            elements.regResumeDropzone.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) {
+                const file = e.dataTransfer.files[0];
+                authState.regResumeFile = file;
+                elements.regFileName.textContent = file.name;
+                elements.regResumeFilePreview.classList.remove('hidden');
+                elements.regDropzoneText.textContent = 'File attached';
+            }
+        });
+        elements.regResumeInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                const file = e.target.files[0];
+                authState.regResumeFile = file;
+                elements.regFileName.textContent = file.name;
+                elements.regResumeFilePreview.classList.remove('hidden');
+                elements.regDropzoneText.textContent = 'File attached';
+            }
+        });
+        elements.regRemoveFileBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            resetRegDropzone();
+        });
+    }
+
+    // Profile & Resume Modal Listeners
+    if (elements.openProfileModalBtn) {
+        elements.openProfileModalBtn.addEventListener('click', () => openProfileModal('resumes'));
+    }
+    if (elements.closeProfileModalBtn) {
+        elements.closeProfileModalBtn.addEventListener('click', closeProfileModal);
+    }
+    if (elements.logoutBtn) {
+        elements.logoutBtn.addEventListener('click', handleLogout);
+    }
+    if (elements.tabResumesBtn) {
+        elements.tabResumesBtn.addEventListener('click', () => switchProfileTab('resumes'));
+    }
+    if (elements.tabPreferencesBtn) {
+        elements.tabPreferencesBtn.addEventListener('click', () => switchProfileTab('preferences'));
+    }
+    if (elements.uploadResumeForm) {
+        elements.uploadResumeForm.addEventListener('submit', handleUploadResume);
+    }
+    if (elements.preferencesForm) {
+        elements.preferencesForm.addEventListener('submit', (e) => handleSavePreferences(e, false));
+    }
+    if (elements.applyPreferencesToSearchBtn) {
+        elements.applyPreferencesToSearchBtn.addEventListener('click', () => handleSavePreferences(null, true));
+    }
+    if (elements.matchProfileBtn) {
+        elements.matchProfileBtn.addEventListener('click', handleMatchProfile);
+    }
+
+    // Close on backdrop click
+    window.addEventListener('click', (e) => {
+        if (e.target === elements.authModal) closeAuthModal();
+        if (e.target === elements.profileModal) closeProfileModal();
+        if (e.target === elements.scrapeModal) closeScrapeModal();
+        if (e.target === elements.enrichModal) closeEnrichModal();
+    });
+
+    // Close on Escape key
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeAuthModal();
+            closeProfileModal();
+            closeScrapeModal();
+            closeEnrichModal();
+        }
+    });
+}
+
+// ==========================================
+// Authentication & Candidate Profile Logic
+// ==========================================
+
+const authState = {
+    token: localStorage.getItem('civil_auth_token') || null,
+    user: null,
+    resumes: [],
+    regResumeFile: null
+};
+
+function getAuthHeaders(includeContentType = true) {
+    const headers = {};
+    if (includeContentType) {
+        headers['Content-Type'] = 'application/json';
+    }
+    if (authState.token) {
+        headers['Authorization'] = `Bearer ${authState.token}`;
+    }
+    return headers;
+}
+
+function formatBytes(bytes, decimals = 1) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
+async function initAuth() {
+    if (!authState.token) {
+        renderAuthUI();
+        return;
+    }
+    try {
+        const res = await fetch('/api/auth/me', { headers: getAuthHeaders() });
+        if (res.ok) {
+            const data = await res.json();
+            authState.user = data.user;
+        } else {
+            authState.token = null;
+            authState.user = null;
+            localStorage.removeItem('civil_auth_token');
+        }
+    } catch (err) {
+        console.error('Auth check error:', err);
+    }
+    renderAuthUI();
+}
+
+function renderAuthUI() {
+    if (authState.user) {
+        elements.openAuthModalBtn.classList.add('hidden');
+        elements.loggedInUserPill.classList.remove('hidden');
+        const initial = (authState.user.username || 'U')[0].toUpperCase();
+        elements.userAvatarLetter.textContent = initial;
+        elements.headerUsername.textContent = authState.user.username;
+        const cnt = authState.user.resume_count || 0;
+        elements.headerResumeBadge.textContent = `${cnt} CV${cnt === 1 ? '' : 's'}`;
+        elements.matchProfileBtn.classList.remove('hidden');
+    } else {
+        elements.openAuthModalBtn.classList.remove('hidden');
+        elements.loggedInUserPill.classList.add('hidden');
+        elements.matchProfileBtn.classList.add('hidden');
+    }
+}
+
+function openAuthModal(tab = 'login') {
+    elements.authModal.classList.remove('hidden');
+    switchAuthTab(tab);
+}
+
+function closeAuthModal() {
+    elements.authModal.classList.add('hidden');
+    elements.loginAlert.classList.add('hidden');
+    elements.registerAlert.classList.add('hidden');
+}
+
+function switchAuthTab(tab) {
+    if (tab === 'login') {
+        elements.authTabLogin.classList.add('active');
+        elements.authTabRegister.classList.remove('active');
+        elements.loginForm.classList.remove('hidden');
+        elements.registerForm.classList.add('hidden');
+    } else {
+        elements.authTabRegister.classList.add('active');
+        elements.authTabLogin.classList.remove('active');
+        elements.registerForm.classList.remove('hidden');
+        elements.loginForm.classList.add('hidden');
+    }
+}
+
+async function handleLogin(e) {
+    e.preventDefault();
+    elements.loginAlert.classList.add('hidden');
+    elements.loginSubmitBtn.disabled = true;
+    elements.loginSubmitBtn.textContent = 'Signing in...';
+
+    try {
+        const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username_or_email: elements.loginUsername.value,
+                password: elements.loginPassword.value
+            })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+            authState.token = data.token;
+            authState.user = data.user;
+            localStorage.setItem('civil_auth_token', data.token);
+            renderAuthUI();
+            closeAuthModal();
+            elements.loginForm.reset();
+        } else {
+            elements.loginAlert.textContent = data.detail || data.message || 'Login failed.';
+            elements.loginAlert.classList.remove('hidden');
+        }
+    } catch (err) {
+        elements.loginAlert.textContent = 'Connection error. Please try again.';
+        elements.loginAlert.classList.remove('hidden');
+    } finally {
+        elements.loginSubmitBtn.disabled = false;
+        elements.loginSubmitBtn.textContent = 'Sign In';
+    }
+}
+
+async function handleRegister(e) {
+    e.preventDefault();
+    elements.registerAlert.classList.add('hidden');
+    elements.registerSubmitBtn.disabled = true;
+    elements.registerSubmitBtn.textContent = 'Creating account...';
+
+    const formData = new FormData();
+    formData.append('username', elements.regUsername.value);
+    formData.append('email', elements.regEmail.value);
+    formData.append('password', elements.regPassword.value);
+
+    if (authState.regResumeFile) {
+        formData.append('resume', authState.regResumeFile);
+        formData.append('resume_description', elements.regResumeDesc.value || 'Primary Resume');
+    }
+
+    try {
+        const res = await fetch('/api/auth/register', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+            authState.token = data.token;
+            authState.user = data.user;
+            localStorage.setItem('civil_auth_token', data.token);
+            renderAuthUI();
+            closeAuthModal();
+            elements.registerForm.reset();
+            resetRegDropzone();
+            openProfileModal('preferences');
+        } else {
+            elements.registerAlert.textContent = data.detail || data.message || 'Registration failed.';
+            elements.registerAlert.classList.remove('hidden');
+        }
+    } catch (err) {
+        elements.registerAlert.textContent = 'Connection error. Please try again.';
+        elements.registerAlert.classList.remove('hidden');
+    } finally {
+        elements.registerSubmitBtn.disabled = false;
+        elements.registerSubmitBtn.textContent = 'Create Account & Save Profile';
+    }
+}
+
+function resetRegDropzone() {
+    authState.regResumeFile = null;
+    if (elements.regResumeInput) elements.regResumeInput.value = '';
+    if (elements.regResumeFilePreview) elements.regResumeFilePreview.classList.add('hidden');
+    if (elements.regDropzoneText) elements.regDropzoneText.textContent = 'Click to upload your resume';
+}
+
+async function handleLogout() {
+    try {
+        await fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: getAuthHeaders()
+        });
+    } catch (err) {
+        console.warn('Logout request failed:', err);
+    }
+    authState.token = null;
+    authState.user = null;
+    localStorage.removeItem('civil_auth_token');
+    renderAuthUI();
+    closeProfileModal();
+}
+
+function openProfileModal(tab = 'resumes') {
+    if (!authState.user) {
+        openAuthModal('login');
+        return;
+    }
+    elements.profileUserEmail.textContent = `Signed in as @${authState.user.username} (${authState.user.email})`;
+    elements.profileModal.classList.remove('hidden');
+    switchProfileTab(tab);
+}
+
+function closeProfileModal() {
+    elements.profileModal.classList.add('hidden');
+    elements.uploadResumeAlert.classList.add('hidden');
+    elements.prefAlert.classList.add('hidden');
+}
+
+function switchProfileTab(tab) {
+    if (tab === 'resumes') {
+        elements.tabResumesBtn.classList.add('active');
+        elements.tabPreferencesBtn.classList.remove('active');
+        elements.panelResumes.classList.remove('hidden');
+        elements.panelPreferences.classList.add('hidden');
+        loadResumes();
+    } else {
+        elements.tabPreferencesBtn.classList.add('active');
+        elements.tabResumesBtn.classList.remove('active');
+        elements.panelPreferences.classList.remove('hidden');
+        elements.panelResumes.classList.add('hidden');
+        loadPreferences();
+    }
+}
+
+async function loadResumes() {
+    elements.resumesListContainer.innerHTML = '<div class="empty-resumes">Loading stored resumes...</div>';
+    try {
+        const res = await fetch('/api/profile/resumes', { headers: getAuthHeaders() });
+        const data = await res.json();
+        const resumes = data.resumes || [];
+        authState.resumes = resumes;
+        elements.profileResumeTabCount.textContent = resumes.length;
+        if (authState.user) {
+            authState.user.resume_count = resumes.length;
+            elements.headerResumeBadge.textContent = `${resumes.length} CV${resumes.length === 1 ? '' : 's'}`;
+        }
+
+        if (resumes.length === 0) {
+            elements.resumesListContainer.innerHTML = `
+                <div class="empty-resumes">
+                    <p>No resumes uploaded yet.</p>
+                    <span class="text-muted">Use the form above to upload your first resume (PDF, DOCX, TXT).</span>
+                </div>
+            `;
+            return;
+        }
+
+        elements.resumesListContainer.innerHTML = resumes.map(r => `
+            <div class="resume-card ${r.is_primary ? 'is-primary' : ''}">
+                <div class="resume-card-left">
+                    <div class="resume-icon-badge">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                        </svg>
+                    </div>
+                    <div class="resume-title-group">
+                        <div class="resume-desc-title">
+                            <span>${escapeHtml(r.description)}</span>
+                            ${r.is_primary ? '<span class="badge badge-success badge-sm">Active / Primary</span>' : ''}
+                        </div>
+                        <div class="resume-meta-sub">
+                            <span>${escapeHtml(r.filename)}</span> &bull; 
+                            <span>${formatBytes(r.file_size)}</span> &bull; 
+                            <span>Uploaded ${formatDate(r.uploaded_at)}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="resume-card-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="downloadResumeFile(${r.id}, '${escapeHtml(r.filename)}')">
+                        Download
+                    </button>
+                    ${!r.is_primary ? `<button class="btn btn-outline btn-sm" onclick="setPrimaryResumeAction(${r.id})">Set Active</button>` : ''}
+                    <button class="btn btn-danger btn-sm" onclick="deleteResumeAction(${r.id})">
+                        Delete
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    } catch (err) {
+        elements.resumesListContainer.innerHTML = '<div class="empty-resumes text-danger">Failed to load resumes.</div>';
+    }
+}
+
+async function handleUploadResume(e) {
+    e.preventDefault();
+    elements.uploadResumeAlert.classList.add('hidden');
+    const file = elements.newResumeFile.files[0];
+    if (!file) {
+        elements.uploadResumeAlert.textContent = 'Please select a document to upload.';
+        elements.uploadResumeAlert.classList.remove('hidden');
+        return;
+    }
+
+    elements.submitUploadResumeBtn.disabled = true;
+    elements.submitUploadResumeBtn.textContent = 'Uploading...';
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('description', elements.newResumeDesc.value || 'My Resume');
+    formData.append('is_primary', elements.newResumePrimary.checked);
+
+    try {
+        const res = await fetch('/api/profile/resumes', {
+            method: 'POST',
+            headers: getAuthHeaders(false),
+            body: formData
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+            elements.uploadResumeForm.reset();
+            loadResumes();
+        } else {
+            elements.uploadResumeAlert.textContent = data.detail || data.message || 'Upload failed.';
+            elements.uploadResumeAlert.classList.remove('hidden');
+        }
+    } catch (err) {
+        elements.uploadResumeAlert.textContent = 'Upload failed. Please try again.';
+        elements.uploadResumeAlert.classList.remove('hidden');
+    } finally {
+        elements.submitUploadResumeBtn.disabled = false;
+        elements.submitUploadResumeBtn.textContent = 'Upload Resume';
+    }
+}
+
+window.downloadResumeFile = async function(resumeId, filename) {
+    try {
+        const res = await fetch(`/api/profile/resumes/${resumeId}/download`, {
+            headers: getAuthHeaders(false)
+        });
+        if (!res.ok) throw new Error('Download failed');
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'resume.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (err) {
+        alert('Could not download resume file.');
+    }
+};
+
+window.setPrimaryResumeAction = async function(resumeId) {
+    try {
+        const res = await fetch(`/api/profile/resumes/${resumeId}/primary`, {
+            method: 'PUT',
+            headers: getAuthHeaders()
+        });
+        if (res.ok) {
+            loadResumes();
+        }
+    } catch (err) {
+        console.error('Failed to set primary resume:', err);
+    }
+};
+
+window.deleteResumeAction = async function(resumeId) {
+    if (!confirm('Are you sure you want to delete this resume?')) return;
+    try {
+        const res = await fetch(`/api/profile/resumes/${resumeId}`, {
+            method: 'DELETE',
+            headers: getAuthHeaders()
+        });
+        if (res.ok) {
+            loadResumes();
+        }
+    } catch (err) {
+        console.error('Failed to delete resume:', err);
+    }
+};
+
+async function loadPreferences() {
+    elements.prefAlert.classList.add('hidden');
+    
+    // Populate role options from filter options
+    if (elements.filterRoleSelect && elements.filterRoleSelect.options.length > 1) {
+        elements.prefRoleType.innerHTML = elements.filterRoleSelect.innerHTML;
+    }
+
+    try {
+        const res = await fetch('/api/profile/preferences', { headers: getAuthHeaders() });
+        const data = await res.json();
+        const prefs = data.preferences || {};
+        
+        elements.prefLocation.value = (prefs.locations || []).join(', ');
+        elements.prefMinSalary.value = prefs.min_salary || '';
+        elements.prefMaxSalary.value = prefs.max_salary || '';
+        elements.prefRoleType.value = prefs.role_type || '';
+        elements.prefJobGrade.value = prefs.job_grade || '';
+        elements.prefWorkingPattern.value = prefs.working_pattern || '';
+        elements.prefContractType.value = prefs.contract_type || '';
+    } catch (err) {
+        console.error('Failed to load preferences:', err);
+    }
+}
+
+async function handleSavePreferences(e, applyToSearch = false) {
+    if (e) e.preventDefault();
+    elements.savePreferencesBtn.disabled = true;
+    elements.savePreferencesBtn.textContent = 'Saving...';
+
+    const locArr = elements.prefLocation.value
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
+    const payload = {
+        locations: locArr,
+        min_salary: elements.prefMinSalary.value ? parseInt(elements.prefMinSalary.value, 10) : null,
+        max_salary: elements.prefMaxSalary.value ? parseInt(elements.prefMaxSalary.value, 10) : null,
+        role_type: elements.prefRoleType.value,
+        job_grade: elements.prefJobGrade.value,
+        working_pattern: elements.prefWorkingPattern.value,
+        contract_type: elements.prefContractType.value
+    };
+
+    try {
+        const res = await fetch('/api/profile/preferences', {
+            method: 'PUT',
+            headers: getAuthHeaders(),
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) {
+            if (authState.user) {
+                authState.user.preferences = data.preferences;
+            }
+            elements.prefAlert.textContent = 'Career preferences saved successfully!';
+            elements.prefAlert.classList.remove('hidden');
+
+            if (applyToSearch) {
+                applyPreferencesToDashboard(payload);
+                closeProfileModal();
+            }
+        }
+    } catch (err) {
+        alert('Failed to save preferences.');
+    } finally {
+        elements.savePreferencesBtn.disabled = false;
+        elements.savePreferencesBtn.textContent = 'Save Career Preferences';
+    }
+}
+
+function applyPreferencesToDashboard(prefs) {
+    if (!prefs) return;
+    if (prefs.locations && prefs.locations.length > 0) {
+        elements.filterLocationInput.value = prefs.locations[0];
+    }
+    if (prefs.min_salary) {
+        elements.filterSalaryMin.value = prefs.min_salary;
+    }
+    if (prefs.max_salary) {
+        elements.filterSalaryMax.value = prefs.max_salary;
+    }
+    if (prefs.job_grade) {
+        elements.filterGradeSelect.value = prefs.job_grade;
+    }
+    if (prefs.role_type) {
+        elements.filterRoleSelect.value = prefs.role_type;
+    }
+    if (prefs.working_pattern) {
+        elements.filterPatternSelect.value = prefs.working_pattern;
+    }
+    if (prefs.contract_type) {
+        elements.filterContractSelect.value = prefs.contract_type;
+    }
+    applySidebarFilters();
+    elements.matchProfileBtn.classList.add('active');
+}
+
+function handleMatchProfile() {
+    if (!authState.user) {
+        openAuthModal('login');
+        return;
+    }
+    const prefs = authState.user.preferences;
+    if (!prefs || (!prefs.locations?.length && !prefs.min_salary && !prefs.max_salary && !prefs.job_grade && !prefs.role_type)) {
+        openProfileModal('preferences');
+        return;
+    }
+    applyPreferencesToDashboard(prefs);
 }
 
 // Initial Boot
@@ -821,6 +1481,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     setupEventListeners();
+    initAuth();
     fetchStats();
     fetchFilterOptions();
     fetchJobs();

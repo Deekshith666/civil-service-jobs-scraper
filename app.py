@@ -1,10 +1,14 @@
 """FastAPI web application to display scraped Civil Service jobs and control scraping runs."""
 
 import os
-from typing import Optional
-from fastapi import FastAPI, BackgroundTasks, Query
+import io
+from typing import Dict, List, Optional
+from fastapi import (
+    FastAPI, BackgroundTasks, Query, Depends, HTTPException,
+    Header, Cookie, Request, Response, UploadFile, File, Form, status
+)
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 from pydantic import BaseModel
 
 import config
@@ -266,3 +270,218 @@ async def trigger_enrichment(request: EnrichRequest, background_tasks: Backgroun
 async def get_enrich_status():
     """Check status of job enrichment."""
     return active_enrich_state
+
+
+# ==========================================
+# User Authentication & Profile Endpoints
+# ==========================================
+
+async def get_current_user(
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None)
+) -> Dict:
+    """Validate Bearer authorization header or session cookie."""
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:].strip()
+    elif session_token:
+        token = session_token
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Please log in."
+        )
+
+    user = database.get_user_by_session(token)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session has expired. Please log in again."
+        )
+
+    user["token"] = token
+    return user
+
+
+class LoginRequest(BaseModel):
+    username_or_email: str
+    password: str
+
+
+class PreferencesUpdateRequest(BaseModel):
+    locations: Optional[List[str]] = []
+    min_salary: Optional[int] = None
+    max_salary: Optional[int] = None
+    job_grade: Optional[str] = ""
+    role_type: Optional[str] = ""
+    working_pattern: Optional[str] = ""
+    contract_type: Optional[str] = ""
+
+
+@app.post("/api/auth/register")
+async def register(
+    response: Response,
+    username: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    resume: Optional[UploadFile] = File(None),
+    resume_description: Optional[str] = Form("Primary Resume")
+):
+    """Register a new user account with optional initial resume upload."""
+    resume_payload = None
+    if resume and resume.filename:
+        content = await resume.read()
+        if len(content) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Resume file exceeds 5MB limit.")
+        resume_payload = {
+            "filename": resume.filename,
+            "description": resume_description or "Primary Resume",
+            "content": content,
+            "content_type": resume.content_type or "application/pdf"
+        }
+
+    try:
+        user = database.create_user(
+            username=username,
+            email=email,
+            password=password,
+            resume_file=resume_payload
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    token = database.create_session(user["id"])
+    response.set_cookie(key="session_token", value=token, max_age=30 * 86400, samesite="lax")
+    user["resume_count"] = 1 if resume_payload else 0
+
+    return {
+        "status": "success",
+        "message": "Account created successfully.",
+        "token": token,
+        "user": user
+    }
+
+
+@app.post("/api/auth/login")
+async def login(request: LoginRequest, response: Response):
+    """Authenticate user and establish session token."""
+    user = database.authenticate_user(request.username_or_email, request.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid username/email or password."
+        )
+
+    token = database.create_session(user["id"])
+    response.set_cookie(key="session_token", value=token, max_age=30 * 86400, samesite="lax")
+
+    # Fetch resume count
+    resumes = database.get_user_resumes(user["id"])
+    user["resume_count"] = len(resumes)
+
+    return {
+        "status": "success",
+        "message": "Logged in successfully.",
+        "token": token,
+        "user": user
+    }
+
+
+@app.post("/api/auth/logout")
+async def logout(response: Response, user: Dict = Depends(get_current_user)):
+    """Terminate current user session."""
+    database.delete_session(user["token"])
+    response.delete_cookie(key="session_token")
+    return {"status": "success", "message": "Logged out successfully."}
+
+
+@app.get("/api/auth/me")
+async def get_me(user: Dict = Depends(get_current_user)):
+    """Fetch current logged-in user profile and preferences."""
+    return {"status": "success", "user": user}
+
+
+@app.get("/api/profile/resumes")
+async def list_resumes(user: Dict = Depends(get_current_user)):
+    """List all resumes uploaded by the current user."""
+    resumes = database.get_user_resumes(user["id"])
+    return {"resumes": resumes}
+
+
+@app.post("/api/profile/resumes")
+async def upload_resume(
+    file: UploadFile = File(...),
+    description: str = Form("My Resume"),
+    is_primary: bool = Form(False),
+    user: Dict = Depends(get_current_user)
+):
+    """Upload a new resume with a specific description (e.g. 'Software Engineer CV')."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file selected.")
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Resume file exceeds 5MB limit.")
+
+    res = database.add_user_resume(
+        user_id=user["id"],
+        filename=file.filename,
+        description=description.strip() or "My Resume",
+        file_content=content,
+        content_type=file.content_type or "application/pdf",
+        is_primary=is_primary
+    )
+
+    return {"status": "success", "message": "Resume uploaded successfully.", "resume": res}
+
+
+@app.get("/api/profile/resumes/{resume_id}/download")
+async def download_resume(resume_id: int, user: Dict = Depends(get_current_user)):
+    """Download a stored resume file."""
+    record = database.get_resume_by_id(resume_id, user["id"])
+    if not record:
+        raise HTTPException(status_code=404, detail="Resume not found.")
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{record["filename"]}"'
+    }
+    return Response(
+        content=record["file_content"],
+        media_type=record["content_type"] or "application/octet-stream",
+        headers=headers
+    )
+
+
+@app.delete("/api/profile/resumes/{resume_id}")
+async def delete_resume(resume_id: int, user: Dict = Depends(get_current_user)):
+    """Delete a resume."""
+    success = database.delete_user_resume(resume_id, user["id"])
+    if not success:
+        raise HTTPException(status_code=404, detail="Resume not found.")
+    return {"status": "success", "message": "Resume deleted successfully."}
+
+
+@app.put("/api/profile/resumes/{resume_id}/primary")
+async def set_primary(resume_id: int, user: Dict = Depends(get_current_user)):
+    """Set resume as primary."""
+    success = database.set_primary_resume(resume_id, user["id"])
+    if not success:
+        raise HTTPException(status_code=404, detail="Resume not found.")
+    return {"status": "success", "message": "Primary resume updated."}
+
+
+@app.get("/api/profile/preferences")
+async def get_preferences(user: Dict = Depends(get_current_user)):
+    """Fetch user's job search preferences."""
+    return {"preferences": user.get("preferences", {})}
+
+
+@app.put("/api/profile/preferences")
+async def save_preferences(
+    payload: PreferencesUpdateRequest,
+    user: Dict = Depends(get_current_user)
+):
+    """Save user's job preferences (locations, salary scale, roles, etc.)."""
+    updated = database.update_user_preferences(user["id"], payload.dict())
+    return {"status": "success", "message": "Preferences saved successfully.", "preferences": updated}

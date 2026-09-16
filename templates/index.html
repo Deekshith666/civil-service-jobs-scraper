@@ -46,6 +46,31 @@
                     </svg>
                     <span>Run Scraper Now</span>
                 </button>
+
+                <!-- Auth Widget: Sign In or Logged-in Profile Pill -->
+                <div id="authHeaderWidget" class="auth-header-widget">
+                    <button id="openAuthModalBtn" class="btn btn-secondary auth-btn" title="Sign In or Register">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                        <span>Sign In</span>
+                    </button>
+                    <div id="loggedInUserPill" class="user-pill hidden">
+                        <button id="openProfileModalBtn" class="user-pill-btn" title="Open Career Profile & Resumes">
+                            <span class="user-avatar-circle" id="userAvatarLetter">U</span>
+                            <span class="user-name-text" id="headerUsername">User</span>
+                            <span class="badge badge-primary badge-sm" id="headerResumeBadge">0 CVs</span>
+                        </button>
+                        <button id="logoutBtn" class="btn-icon-subtle" title="Sign Out">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                                <polyline points="16 17 21 12 16 7"></polyline>
+                                <line x1="21" y1="12" x2="9" y2="12"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     </header>
@@ -336,6 +361,12 @@
                     <div class="filter-summary-row">
                         <div class="results-count-text">
                             Showing <strong id="visibleJobsCount">0</strong> of <strong id="totalJobsCount">0</strong> vacancies matching criteria
+                            <button id="matchProfileBtn" class="btn btn-sm btn-outline match-profile-btn hidden" title="Filter vacancies according to your saved profile preferences">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path>
+                                </svg>
+                                <span>Match My Profile</span>
+                            </button>
                         </div>
                         <div class="quick-tags" id="quickTags"></div>
                     </div>
@@ -454,6 +485,269 @@
             <div class="modal-footer">
                 <button id="cancelEnrichModalBtn" class="btn btn-secondary">Cancel</button>
                 <button id="confirmEnrichBtn" class="btn btn-primary glow-btn">Start Enrichment</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Authentication Modal (Sign In & Register) -->
+    <div id="authModal" class="modal-backdrop hidden">
+        <div class="modal-card auth-modal-card">
+            <div class="modal-header">
+                <div class="auth-tabs">
+                    <button id="authTabLogin" class="auth-tab active" type="button">Sign In</button>
+                    <button id="authTabRegister" class="auth-tab" type="button">Create Account</button>
+                </div>
+                <button id="closeAuthModalBtn" class="close-btn" type="button">&times;</button>
+            </div>
+            
+            <div class="modal-body">
+                <!-- Sign In Form -->
+                <form id="loginForm" class="auth-form">
+                    <div id="loginAlert" class="alert-box alert-danger hidden"></div>
+                    <div class="form-group">
+                        <label for="loginUsername">Username or Email:</label>
+                        <input type="text" id="loginUsername" class="form-control" placeholder="e.g. civil_applicant or user@example.com" required autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="loginPassword">Password:</label>
+                        <input type="password" id="loginPassword" class="form-control" placeholder="••••••••" required autocomplete="current-password">
+                    </div>
+                    <button type="submit" id="loginSubmitBtn" class="btn btn-primary btn-block glow-btn">
+                        Sign In
+                    </button>
+                </form>
+
+                <!-- Register Form -->
+                <form id="registerForm" class="auth-form hidden" enctype="multipart/form-data">
+                    <div id="registerAlert" class="alert-box alert-danger hidden"></div>
+                    <div class="form-group">
+                        <label for="regUsername">Username <span class="text-danger">*</span>:</label>
+                        <input type="text" id="regUsername" class="form-control" placeholder="e.g. john_applicant" minlength="3" required autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="regEmail">Email Address <span class="text-danger">*</span>:</label>
+                        <input type="email" id="regEmail" class="form-control" placeholder="e.g. applicant@gov.uk" required autocomplete="email">
+                    </div>
+                    <div class="form-group">
+                        <label for="regPassword">Password <span class="text-danger">*</span>:</label>
+                        <input type="password" id="regPassword" class="form-control" placeholder="At least 6 characters" minlength="6" required autocomplete="new-password">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Current Resume / CV (Optional):</label>
+                        <div class="resume-dropzone" id="regResumeDropzone">
+                            <input type="file" id="regResumeInput" class="hidden-file-input" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain">
+                            <div class="dropzone-content">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                    <line x1="12" y1="18" x2="12" y2="12"></line>
+                                    <line x1="9" y1="15" x2="15" y2="15"></line>
+                                </svg>
+                                <span class="dropzone-text" id="regDropzoneText">Click to upload your resume</span>
+                                <span class="dropzone-hint">PDF, DOCX, or TXT (Max 5MB)</span>
+                            </div>
+                        </div>
+                        <div id="regResumeFilePreview" class="file-preview hidden">
+                            <span class="file-name" id="regFileName">filename.pdf</span>
+                            <button type="button" id="regRemoveFileBtn" class="btn-text-danger">&times; Remove</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="regResumeDesc">Resume Description:</label>
+                        <input type="text" id="regResumeDesc" class="form-control" placeholder="e.g. General Civil Service CV, Policy Lead Resume" value="Primary Resume">
+                    </div>
+
+                    <button type="submit" id="registerSubmitBtn" class="btn btn-primary btn-block glow-btn">
+                        Create Account & Save Profile
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Candidate Profile & Preferences Modal -->
+    <div id="profileModal" class="modal-backdrop hidden">
+        <div class="modal-card profile-modal-card">
+            <div class="modal-header">
+                <div>
+                    <h3 class="modal-title">Candidate Profile & Career Hub</h3>
+                    <p class="modal-subtitle" id="profileUserEmail">Signed in as ...</p>
+                </div>
+                <button id="closeProfileModalBtn" class="close-btn" type="button">&times;</button>
+            </div>
+
+            <!-- Profile Nav Tabs -->
+            <div class="profile-tabs">
+                <button id="tabResumesBtn" class="profile-tab active" type="button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                    <span>My Resumes (<span id="profileResumeTabCount">0</span>)</span>
+                </button>
+                <button id="tabPreferencesBtn" class="profile-tab" type="button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    <span>Job Preferences (Place, Salary, Roles)</span>
+                </button>
+            </div>
+
+            <div class="modal-body profile-modal-body">
+                <!-- RESUMES TAB PANEL -->
+                <div id="panelResumes" class="profile-panel active">
+                    <!-- Upload Another Resume Form -->
+                    <div class="profile-card-sub">
+                        <h4 class="section-title">Upload Another Resume</h4>
+                        <p class="section-desc">Add targeted resumes tailored for different civil service professions (e.g. Policy, Tech, Project Delivery).</p>
+                        
+                        <form id="uploadResumeForm" class="upload-resume-form" enctype="multipart/form-data">
+                            <div id="uploadResumeAlert" class="alert-box alert-danger hidden"></div>
+                            <div class="form-row-grid">
+                                <div class="form-group">
+                                    <label for="newResumeDesc">Resume Description / Target Role <span class="text-danger">*</span>:</label>
+                                    <input type="text" id="newResumeDesc" class="form-control" placeholder="e.g. Senior Project Manager CV" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="newResumeFile">Choose Document (PDF, DOCX, TXT) <span class="text-danger">*</span>:</label>
+                                    <input type="file" id="newResumeFile" class="form-control" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" required>
+                                </div>
+                            </div>
+                            <div class="form-row-checkbox">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="newResumePrimary">
+                                    <span>Set as active / primary resume</span>
+                                </label>
+                                <button type="submit" id="submitUploadResumeBtn" class="btn btn-primary btn-sm glow-btn">
+                                    Upload Resume
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Resumes List -->
+                    <div class="profile-section">
+                        <h4 class="section-title">Your Uploaded Resumes</h4>
+                        <div id="resumesListContainer" class="resumes-list">
+                            <div class="empty-resumes">Loading resumes...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PREFERENCES TAB PANEL -->
+                <div id="panelPreferences" class="profile-panel hidden">
+                    <div class="profile-card-sub">
+                        <h4 class="section-title">Saved Job & Location Preferences</h4>
+                        <p class="section-desc">Configure your preferred location, target salary scale, and role types. Use the <strong>Match My Profile</strong> button anytime to instantly view matching Civil Service jobs.</p>
+
+                        <form id="preferencesForm" class="preferences-form">
+                            <div id="prefAlert" class="alert-box alert-success hidden"></div>
+                            
+                            <!-- 1. Location / Place Preference -->
+                            <div class="form-group">
+                                <label for="prefLocation">Preferred Place / Regions:</label>
+                                <input type="text" id="prefLocation" class="form-control" placeholder="e.g. London, Manchester, Bristol, Remote, Hybrid">
+                                <span class="form-hint">Comma-separated regions or cities you want to work in.</span>
+                            </div>
+
+                            <!-- 2. Salary Scale Preference -->
+                            <div class="form-row-grid">
+                                <div class="form-group">
+                                    <label for="prefMinSalary">Minimum Annual Salary (£):</label>
+                                    <select id="prefMinSalary" class="form-control">
+                                        <option value="">No minimum threshold</option>
+                                        <option value="25000">£25,000</option>
+                                        <option value="30000">£30,000</option>
+                                        <option value="35000">£35,000</option>
+                                        <option value="40000">£40,000</option>
+                                        <option value="50000">£50,000</option>
+                                        <option value="60000">£60,000</option>
+                                        <option value="75000">£75,000</option>
+                                        <option value="100000">£100,000</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="prefMaxSalary">Desired / Max Salary Scale (£):</label>
+                                    <select id="prefMaxSalary" class="form-control">
+                                        <option value="">No ceiling</option>
+                                        <option value="35000">£35,000</option>
+                                        <option value="45000">£45,000</option>
+                                        <option value="55000">£55,000</option>
+                                        <option value="70000">£70,000</option>
+                                        <option value="85000">£85,000</option>
+                                        <option value="100000">£100,000</option>
+                                        <option value="150000">£150,000</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- 3. Role & Grade Preferences -->
+                            <div class="form-row-grid">
+                                <div class="form-group">
+                                    <label for="prefRoleType">Preferred Type of Role:</label>
+                                    <select id="prefRoleType" class="form-control">
+                                        <option value="">Any Role Type</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="prefJobGrade">Target Job Grade:</label>
+                                    <select id="prefJobGrade" class="form-control">
+                                        <option value="">Any Grade</option>
+                                        <option value="Administrative Assistant">Administrative Assistant (AA)</option>
+                                        <option value="Administrative Officer">Administrative Officer (AO)</option>
+                                        <option value="Executive Officer">Executive Officer (EO)</option>
+                                        <option value="Higher Executive Officer">Higher Executive Officer (HEO)</option>
+                                        <option value="Senior Executive Officer">Senior Executive Officer (SEO)</option>
+                                        <option value="Grade 7">Grade 7</option>
+                                        <option value="Grade 6">Grade 6</option>
+                                        <option value="SCS Pay Band 1">SCS Pay Band 1</option>
+                                        <option value="SCS Pay Band 2">SCS Pay Band 2</option>
+                                        <option value="SCS Pay Band 3">SCS Pay Band 3</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- 4. Pattern & Contract Preferences -->
+                            <div class="form-row-grid">
+                                <div class="form-group">
+                                    <label for="prefWorkingPattern">Working Pattern:</label>
+                                    <select id="prefWorkingPattern" class="form-control">
+                                        <option value="">Any Pattern</option>
+                                        <option value="Full-time">Full-time</option>
+                                        <option value="Part-time">Part-time</option>
+                                        <option value="Flexible working">Flexible working</option>
+                                        <option value="Job share">Job share</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="prefContractType">Contract Type:</label>
+                                    <select id="prefContractType" class="form-control">
+                                        <option value="">Any Contract</option>
+                                        <option value="Permanent">Permanent</option>
+                                        <option value="Fixed term">Fixed term</option>
+                                        <option value="Temporary">Temporary</option>
+                                        <option value="Apprenticeship">Apprenticeship</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="preferences-action-bar">
+                                <button type="submit" id="savePreferencesBtn" class="btn btn-primary glow-btn">
+                                    Save Career Preferences
+                                </button>
+                                <button type="button" id="applyPreferencesToSearchBtn" class="btn btn-secondary">
+                                    Save & Apply to Search Results
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
