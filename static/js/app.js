@@ -126,6 +126,11 @@ const elements = {
     regUsername: document.getElementById('regUsername'),
     regEmail: document.getElementById('regEmail'),
     regPassword: document.getElementById('regPassword'),
+    ruleMinLength: document.getElementById('ruleMinLength'),
+    ruleUppercase: document.getElementById('ruleUppercase'),
+    ruleLowercase: document.getElementById('ruleLowercase'),
+    ruleNumber: document.getElementById('ruleNumber'),
+    ruleSpecial: document.getElementById('ruleSpecial'),
     regResumeDropzone: document.getElementById('regResumeDropzone'),
     regResumeInput: document.getElementById('regResumeInput'),
     regDropzoneText: document.getElementById('regDropzoneText'),
@@ -894,6 +899,12 @@ function setupEventListeners() {
     if (elements.registerForm) {
         elements.registerForm.addEventListener('submit', handleRegister);
     }
+    if (elements.regPassword) {
+        elements.regPassword.addEventListener('input', (e) => {
+            validatePasswordConditions(e.target.value);
+        });
+    }
+
 
     // Register Resume Dropzone
     if (elements.regResumeDropzone) {
@@ -1109,16 +1120,54 @@ async function handleLogin(e) {
     }
 }
 
+function validatePasswordConditions(pwd) {
+    if (!pwd) pwd = '';
+    const hasMinLength = pwd.length >= 8;
+    const hasUpper = /[A-Z]/.test(pwd);
+    const hasLower = /[a-z]/.test(pwd);
+    const hasNumber = /[0-9]/.test(pwd);
+    const hasSpecial = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(pwd);
+
+    updateRuleItem(elements.ruleMinLength, hasMinLength);
+    updateRuleItem(elements.ruleUppercase, hasUpper);
+    updateRuleItem(elements.ruleLowercase, hasLower);
+    updateRuleItem(elements.ruleNumber, hasNumber);
+    updateRuleItem(elements.ruleSpecial, hasSpecial);
+
+    return hasMinLength && hasUpper && hasLower && hasNumber && hasSpecial;
+}
+
+function updateRuleItem(el, isValid) {
+    if (!el) return;
+    const icon = el.querySelector('.rule-icon');
+    if (isValid) {
+        el.classList.add('valid');
+        if (icon) icon.textContent = '✓';
+    } else {
+        el.classList.remove('valid');
+        if (icon) icon.textContent = '○';
+    }
+}
+
 async function handleRegister(e) {
     e.preventDefault();
     elements.registerAlert.classList.add('hidden');
+
+    const pwd = (elements.regPassword && elements.regPassword.value) || '';
+    if (!validatePasswordConditions(pwd)) {
+        elements.registerAlert.textContent = 'Password must meet all complexity requirements (8+ characters, uppercase, lowercase, number, and special character).';
+        elements.registerAlert.classList.remove('hidden');
+        if (elements.regPassword) elements.regPassword.focus();
+        return;
+    }
+
     elements.registerSubmitBtn.disabled = true;
     elements.registerSubmitBtn.textContent = 'Creating account...';
 
     const formData = new FormData();
     formData.append('username', elements.regUsername.value);
     formData.append('email', elements.regEmail.value);
-    formData.append('password', elements.regPassword.value);
+    formData.append('password', pwd);
 
     if (authState.regResumeFile) {
         formData.append('resume', authState.regResumeFile);
@@ -1138,6 +1187,7 @@ async function handleRegister(e) {
             renderAuthUI();
             closeAuthModal();
             elements.registerForm.reset();
+            validatePasswordConditions('');
             resetRegDropzone();
             openProfileModal('preferences');
         } else {

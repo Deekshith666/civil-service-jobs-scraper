@@ -12,6 +12,11 @@ BUNDLED_DB_PATH = BUNDLED_DATA_DIR / "jobs.db"
 # Environment Detection (Vercel Serverless / AWS Lambda)
 IS_VERCEL = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
 
+# Cloud Database Connection Options (for permanent Vercel persistence of user data)
+DATABASE_URL = os.getenv("DATABASE_URL")
+TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL")
+TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
+
 if IS_VERCEL:
     # On Vercel, the application bundle (/var/task) is mounted strictly read-only.
     # The only writable directory is /tmp.
@@ -20,22 +25,27 @@ if IS_VERCEL:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
     except OSError:
         pass
-    DB_PATH = DATA_DIR / "jobs.db"
-
-    # Seed the writable /tmp database from the bundled jobs.db on cold start
-    if BUNDLED_DB_PATH.exists() and (not DB_PATH.exists() or DB_PATH.stat().st_size == 0):
-        try:
-            shutil.copyfile(BUNDLED_DB_PATH, DB_PATH)
-        except Exception:
-            # Fallback to bundled DB in case copying fails
-            DB_PATH = BUNDLED_DB_PATH
+    
+    # 1. Scraped Jobs Catalog: bundled with project, read-only on Vercel
+    JOBS_DB_PATH = BUNDLED_DB_PATH
+    
+    # 2. User Store: isolated in writable storage (or cloud database)
+    USERS_DB_PATH = DATA_DIR / "users.db"
+    
+    # Backwards compatibility alias
+    DB_PATH = JOBS_DB_PATH
 else:
     DATA_DIR = BUNDLED_DATA_DIR
     try:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
     except OSError:
         pass
-    DB_PATH = DATA_DIR / "jobs.db"
+    
+    # In local environment, jobs.db is in data/, and users.db is also in data/ (gitignored)
+    JOBS_DB_PATH = DATA_DIR / "jobs.db"
+    USERS_DB_PATH = DATA_DIR / "users.db"
+    DB_PATH = JOBS_DB_PATH
+
 
 # URLs
 BASE_URL = "https://www.civilservicejobs.service.gov.uk"

@@ -10,19 +10,40 @@ import secrets
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Set, Tuple
-from config import DB_PATH
+from config import (
+    JOBS_DB_PATH,
+    USERS_DB_PATH,
+    DATABASE_URL,
+    TURSO_DATABASE_URL,
+    TURSO_AUTH_TOKEN,
+    DB_PATH,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def is_database_writable() -> bool:
-    """Check if the configured SQLite database file and directory can be written to."""
+def is_jobs_db_writable() -> bool:
+    """Check if the configured jobs catalog SQLite database file and directory can be written to."""
     try:
-        if DB_PATH.exists():
-            return os.access(str(DB_PATH), os.W_OK) and os.access(str(DB_PATH.parent), os.W_OK)
-        return os.access(str(DB_PATH.parent), os.W_OK)
+        if JOBS_DB_PATH.exists():
+            return os.access(str(JOBS_DB_PATH), os.W_OK) and os.access(str(JOBS_DB_PATH.parent), os.W_OK)
+        return os.access(str(JOBS_DB_PATH.parent), os.W_OK)
     except Exception:
         return False
+
+
+def is_users_db_writable() -> bool:
+    """Check if the configured user data store SQLite database file and directory can be written to."""
+    try:
+        if USERS_DB_PATH.exists():
+            return os.access(str(USERS_DB_PATH), os.W_OK) and os.access(str(USERS_DB_PATH.parent), os.W_OK)
+        return os.access(str(USERS_DB_PATH.parent), os.W_OK)
+    except Exception:
+        return False
+
+
+# Backwards compatibility alias
+is_database_writable = is_jobs_db_writable
 
 
 def parse_salary_range(salary_str: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
@@ -49,12 +70,14 @@ def parse_salary_range(salary_str: Optional[str]) -> Tuple[Optional[int], Option
     return min(valid_salaries), max(valid_salaries)
 
 
-def get_db_connection() -> sqlite3.Connection:
-    """Create and return a database connection with row factory enabled."""
-    db_file_str = str(DB_PATH)
+def get_jobs_db_connection() -> sqlite3.Connection:
+    """
+    Create and return a database connection to the scraped jobs catalog.
+    Uses immutable URI mode on read-only environments (e.g. Vercel serverless).
+    """
+    db_file_str = str(JOBS_DB_PATH)
 
-    # If the target database is read-only, connect using immutable URI mode
-    if not is_database_writable():
+    if not is_jobs_db_writable():
         uri_path = Path(db_file_str).resolve().as_posix()
         conn = sqlite3.connect(f"file:{uri_path}?mode=ro&immutable=1", uri=True)
         conn.row_factory = sqlite3.Row
@@ -73,131 +96,170 @@ def get_db_connection() -> sqlite3.Connection:
         raise
 
 
-def init_db():
-    """Initialize database tables, columns, and indexes."""
-    if not is_database_writable():
-        logger.warning("Database path is read-only (e.g. Vercel deployment). Skipping schema initialization.")
+# Jobs catalog queries default connection
+get_db_connection = get_jobs_db_connection
+
+
+def get_users_db_connection() -> sqlite3.Connection:
+    """
+    Create and return a connection to the dedicated user data store.
+    Completely isolated from the scraped jobs catalog to prevent overwrites.
+    """
+    try:
+        USERS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
+    conn = sqlite3.connect(str(USERS_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_jobs_db():
+    """Initialize jobs catalog tables and indexes if writable."""
+    if not is_jobs_db_writable():
+        logger.info("Jobs catalog database is read-only. Skipping jobs schema initialization.")
         return
 
     try:
-        with get_db_connection() as conn:
+        with get_jobs_db_connection() as conn:
             cursor = conn.cursor()
-        
-        # Base Jobs table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS jobs (
-                reference_number TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                department TEXT,
-                location TEXT,
-                salary TEXT,
-                salary_min INTEGER,
-                salary_max INTEGER,
-                job_grade TEXT,
-                role_type TEXT,
-                working_pattern TEXT,
-                contract_type TEXT,
-                closing_date TEXT,
-                job_url TEXT,
-                logo_url TEXT,
-                first_seen_at TEXT NOT NULL,
-                last_scraped_at TEXT NOT NULL
-            )
-        """)
-        
-        # Check for and apply schema migrations for existing DBs
-        cursor.execute("PRAGMA table_info(jobs)")
-        existing_cols = {row[1] for row in cursor.fetchall()}
-        
-        new_columns = [
-            ("salary_min", "INTEGER"),
-            ("salary_max", "INTEGER"),
-            ("job_grade", "TEXT"),
-            ("role_type", "TEXT"),
-            ("working_pattern", "TEXT"),
-            ("contract_type", "TEXT"),
-        ]
-        
-        for col_name, col_type in new_columns:
-            if col_name not in existing_cols:
-                cursor.execute(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_type}")
-        
-        # Scrape runs audit log
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS scrape_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_at TEXT NOT NULL,
-                mode TEXT NOT NULL,
-                pages_scraped INTEGER DEFAULT 0,
-                jobs_found INTEGER DEFAULT 0,
-                new_jobs_added INTEGER DEFAULT 0,
-                duration_seconds REAL DEFAULT 0.0,
-                status TEXT DEFAULT 'success',
-                error_message TEXT
-            )
-        """)
-        
-        # Users table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                salt TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                preferences_json TEXT DEFAULT '{}'
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS jobs (
+                    reference_number TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    department TEXT,
+                    location TEXT,
+                    salary TEXT,
+                    salary_min INTEGER,
+                    salary_max INTEGER,
+                    job_grade TEXT,
+                    role_type TEXT,
+                    working_pattern TEXT,
+                    contract_type TEXT,
+                    closing_date TEXT,
+                    job_url TEXT,
+                    logo_url TEXT,
+                    first_seen_at TEXT NOT NULL,
+                    last_scraped_at TEXT NOT NULL
+                )
+            """)
 
-        # User Resumes table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_resumes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                filename TEXT NOT NULL,
-                description TEXT NOT NULL,
-                file_content BLOB NOT NULL,
-                file_size INTEGER NOT NULL,
-                content_type TEXT NOT NULL,
-                is_primary INTEGER DEFAULT 0,
-                uploaded_at TEXT NOT NULL
-            )
-        """)
+            cursor.execute("PRAGMA table_info(jobs)")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+            new_columns = [
+                ("salary_min", "INTEGER"),
+                ("salary_max", "INTEGER"),
+                ("job_grade", "TEXT"),
+                ("role_type", "TEXT"),
+                ("working_pattern", "TEXT"),
+                ("contract_type", "TEXT"),
+            ]
+            for col_name, col_type in new_columns:
+                if col_name not in existing_cols:
+                    cursor.execute(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_type}")
 
-        # User Sessions table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_sessions (
-                token TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                created_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS scrape_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_at TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    pages_scraped INTEGER DEFAULT 0,
+                    jobs_found INTEGER DEFAULT 0,
+                    new_jobs_added INTEGER DEFAULT 0,
+                    duration_seconds REAL DEFAULT 0.0,
+                    status TEXT DEFAULT 'success',
+                    error_message TEXT
+                )
+            """)
 
-        # Indexes for fast querying & filtering
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_dept ON jobs(department)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen_at)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_closing ON jobs(closing_date)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_salary_min ON jobs(salary_min)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_salary_max ON jobs(salary_max)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_grade ON jobs(job_grade)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_role ON jobs(role_type)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_contract ON jobs(contract_type)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_pattern ON jobs(working_pattern)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_run_at ON scrape_logs(run_at)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_resumes_user_id ON user_resumes(user_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(token)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id)")
-        
-        conn.commit()
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_dept ON jobs(department)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_closing ON jobs(closing_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_salary_min ON jobs(salary_min)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_salary_max ON jobs(salary_max)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_grade ON jobs(job_grade)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_role ON jobs(role_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_contract ON jobs(contract_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_pattern ON jobs(working_pattern)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_run_at ON scrape_logs(run_at)")
+            conn.commit()
     except sqlite3.OperationalError as e:
-        if "readonly" in str(e).lower() or "attempt to write" in str(e).lower():
-            logger.warning(f"Database write rejected: {e}. Skipping schema initialization.")
-        else:
-            raise
+        logger.warning(f"Jobs DB initialization skipped: {e}")
+
+
+def init_users_db():
+    """Initialize dedicated user store tables, resumes, sessions, and preferences."""
+    try:
+        with get_users_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Users table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    salt TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    preferences_json TEXT DEFAULT '{}'
+                )
+            """)
+
+            # User Resumes table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_resumes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    filename TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    file_content BLOB NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    content_type TEXT NOT NULL,
+                    is_primary INTEGER DEFAULT 0,
+                    uploaded_at TEXT NOT NULL
+                )
+            """)
+
+            # User Sessions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                    token TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )
+            """)
+
+            # User Modifications & Bookmarks table (future-proof user modifications on Vercel)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_saved_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    job_reference TEXT NOT NULL,
+                    saved_at TEXT NOT NULL,
+                    notes TEXT DEFAULT '',
+                    UNIQUE(user_id, job_reference)
+                )
+            """)
+
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_resumes_user_id ON user_resumes(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(token)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_jobs_user ON user_saved_jobs(user_id)")
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Error initializing users database: {e}")
+
+
+def init_db():
+    """Initialize both jobs catalog and user store schemas."""
+    init_jobs_db()
+    init_users_db()
+
 
 
 def backfill_salary_ranges():
@@ -667,6 +729,32 @@ def get_recent_logs(limit: int = 10) -> List[Dict]:
 # User Authentication & Profile Management
 # ==========================================
 
+# ==========================================
+# User Authentication & Profile Management (Decoupled User Store)
+# ==========================================
+
+def validate_password_complexity(password: str) -> Tuple[bool, Optional[str]]:
+    """
+    Enforce security criteria:
+    - At least 8 characters
+    - At least 1 uppercase letter (A-Z)
+    - At least 1 lowercase letter (a-z)
+    - At least 1 number (0-9)
+    - At least 1 special character (!@#$%^&*...)
+    """
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long."
+    if not re.search(r"[A-Z]", password):
+        return False, "Password must contain at least one uppercase letter (A-Z)."
+    if not re.search(r"[a-z]", password):
+        return False, "Password must contain at least one lowercase letter (a-z)."
+    if not re.search(r"\d", password):
+        return False, "Password must contain at least one number (0-9)."
+    if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?~`]", password):
+        return False, "Password must contain at least one special character (e.g. !@#$%^&*)."
+    return True, None
+
+
 def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
     """Hash password using PBKDF2-HMAC-SHA256 with 100,000 iterations and salt."""
     if not salt:
@@ -687,16 +775,18 @@ def create_user(
     password: str,
     resume_file: Optional[Dict] = None
 ) -> Dict:
-    """Register a new user, optionally saving an initial uploaded resume."""
+    """Register a new user in the isolated user store with strict password complexity."""
     username = username.strip()
     email = email.strip().lower()
 
     if len(username) < 3:
         raise ValueError("Username must be at least 3 characters long.")
-    if len(password) < 6:
-        raise ValueError("Password must be at least 6 characters long.")
     if "@" not in email or "." not in email:
         raise ValueError("Please provide a valid email address.")
+
+    valid, err_msg = validate_password_complexity(password)
+    if not valid:
+        raise ValueError(err_msg)
 
     pwd_hash, salt = hash_password(password)
     now_iso = datetime.now().isoformat()
@@ -710,7 +800,7 @@ def create_user(
         "contract_type": ""
     }
 
-    with get_db_connection() as conn:
+    with get_users_db_connection() as conn:
         cursor = conn.cursor()
 
         # Check uniqueness
@@ -752,9 +842,9 @@ def create_user(
 
 
 def authenticate_user(username_or_email: str, password: str) -> Optional[Dict]:
-    """Authenticate user with username/email and password."""
+    """Authenticate user with username/email and password against isolated user store."""
     term = username_or_email.strip()
-    with get_db_connection() as conn:
+    with get_users_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, username, email, password_hash, salt, created_at, preferences_json
@@ -778,12 +868,12 @@ def authenticate_user(username_or_email: str, password: str) -> Optional[Dict]:
 
 
 def create_session(user_id: int, days_valid: int = 30) -> str:
-    """Create a persistent user session token."""
+    """Create a persistent user session token in isolated user store."""
     token = secrets.token_hex(32)
     now = datetime.now()
     expires = now + timedelta(days=days_valid)
 
-    with get_db_connection() as conn:
+    with get_users_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO user_sessions (token, user_id, created_at, expires_at)
@@ -799,7 +889,7 @@ def get_user_by_session(token: str) -> Optional[Dict]:
     if not token:
         return None
     now_iso = datetime.now().isoformat()
-    with get_db_connection() as conn:
+    with get_users_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT u.id, u.username, u.email, u.created_at, u.preferences_json
@@ -827,7 +917,7 @@ def get_user_by_session(token: str) -> Optional[Dict]:
 
 def delete_session(token: str) -> bool:
     """Invalidate a user session on logout."""
-    with get_db_connection() as conn:
+    with get_users_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM user_sessions WHERE token = ?", (token,))
         conn.commit()
@@ -835,9 +925,9 @@ def delete_session(token: str) -> bool:
 
 
 def update_user_preferences(user_id: int, preferences: Dict) -> Dict:
-    """Update search and job preferences for a user."""
+    """Update search and career preferences for a user."""
     prefs_json = json.dumps(preferences)
-    with get_db_connection() as conn:
+    with get_users_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET preferences_json = ? WHERE id = ?", (prefs_json, user_id))
         conn.commit()
@@ -854,10 +944,9 @@ def add_user_resume(
 ) -> Dict:
     """Upload and store a new resume with a specific description."""
     now_iso = datetime.now().isoformat()
-    with get_db_connection() as conn:
+    with get_users_db_connection() as conn:
         cursor = conn.cursor()
 
-        # If user has no other resumes, automatically make this one primary
         cursor.execute("SELECT COUNT(*) as cnt FROM user_resumes WHERE user_id = ?", (user_id,))
         count = cursor.fetchone()["cnt"]
         if count == 0:
@@ -896,8 +985,8 @@ def add_user_resume(
 
 
 def get_user_resumes(user_id: int) -> List[Dict]:
-    """Retrieve metadata of all resumes uploaded by a user (excludes large binary content for performance)."""
-    with get_db_connection() as conn:
+    """Retrieve metadata of all resumes uploaded by a user (excludes large binary content)."""
+    with get_users_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, user_id, filename, description, file_size, content_type, is_primary, uploaded_at
@@ -923,7 +1012,7 @@ def get_user_resumes(user_id: int) -> List[Dict]:
 
 def get_resume_by_id(resume_id: int, user_id: int) -> Optional[Dict]:
     """Fetch full resume record including binary content for downloading."""
-    with get_db_connection() as conn:
+    with get_users_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, user_id, filename, description, file_content, file_size, content_type, is_primary, uploaded_at
@@ -938,7 +1027,7 @@ def get_resume_by_id(resume_id: int, user_id: int) -> Optional[Dict]:
 
 def delete_user_resume(resume_id: int, user_id: int) -> bool:
     """Delete a resume for a user."""
-    with get_db_connection() as conn:
+    with get_users_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT is_primary FROM user_resumes WHERE id = ? AND user_id = ?", (resume_id, user_id))
         row = cursor.fetchone()
@@ -961,7 +1050,7 @@ def delete_user_resume(resume_id: int, user_id: int) -> bool:
 
 def set_primary_resume(resume_id: int, user_id: int) -> bool:
     """Set a specific resume as the primary/active one."""
-    with get_db_connection() as conn:
+    with get_users_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id FROM user_resumes WHERE id = ? AND user_id = ?", (resume_id, user_id))
         if not cursor.fetchone():
@@ -972,11 +1061,40 @@ def set_primary_resume(resume_id: int, user_id: int) -> bool:
         return True
 
 
-# Run initialization on import only if the database is writable
+def save_user_job_bookmark(user_id: int, job_reference: str, notes: str = "") -> bool:
+    """Save/bookmark a job for a user in the isolated user store."""
+    now_iso = datetime.now().isoformat()
+    with get_users_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO user_saved_jobs (user_id, job_reference, saved_at, notes)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, job_reference) DO UPDATE SET saved_at = ?, notes = ?
+        """, (user_id, job_reference, now_iso, notes, now_iso, notes))
+        conn.commit()
+        return True
+
+
+def remove_user_job_bookmark(user_id: int, job_reference: str) -> bool:
+    """Remove a bookmarked job."""
+    with get_users_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM user_saved_jobs WHERE user_id = ? AND job_reference = ?", (user_id, job_reference))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_user_saved_job_references(user_id: int) -> List[str]:
+    """Get list of job references bookmarked by user."""
+    with get_users_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT job_reference FROM user_saved_jobs WHERE user_id = ? ORDER BY saved_at DESC", (user_id,))
+        return [r["job_reference"] for r in cursor.fetchall()]
+
+
+# Run initialization on import
 try:
-    if is_database_writable():
-        init_db()
-    else:
-        logger.info("Skipping database initialization on read-only environment.")
+    init_db()
 except Exception as e:
     logger.warning(f"Database initialization deferred or skipped: {e}")
+

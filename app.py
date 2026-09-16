@@ -330,7 +330,7 @@ async def register(
 ):
     """Register a new user account with optional initial resume upload."""
     resume_payload = None
-    if resume and resume.filename:
+    if resume and hasattr(resume, "filename") and resume.filename:
         content = await resume.read()
         if len(content) > 5 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="Resume file exceeds 5MB limit.")
@@ -338,7 +338,7 @@ async def register(
             "filename": resume.filename,
             "description": resume_description or "Primary Resume",
             "content": content,
-            "content_type": resume.content_type or "application/pdf"
+            "content_type": getattr(resume, "content_type", "application/pdf") or "application/pdf"
         }
 
     try:
@@ -485,3 +485,29 @@ async def save_preferences(
     """Save user's job preferences (locations, salary scale, roles, etc.)."""
     updated = database.update_user_preferences(user["id"], payload.dict())
     return {"status": "success", "message": "Preferences saved successfully.", "preferences": updated}
+
+
+@app.get("/api/profile/saved-jobs")
+async def get_saved_jobs(user: Dict = Depends(get_current_user)):
+    """Fetch list of bookmarked job reference numbers for the current user."""
+    refs = database.get_user_saved_job_references(user["id"])
+    return {"saved_job_references": refs}
+
+
+@app.post("/api/profile/saved-jobs/{job_ref}")
+async def bookmark_job(
+    job_ref: str,
+    notes: str = Query("", description="Optional personal notes"),
+    user: Dict = Depends(get_current_user)
+):
+    """Bookmark a job for the current user in the isolated user store."""
+    database.save_user_job_bookmark(user["id"], job_ref, notes)
+    return {"status": "success", "message": "Job bookmarked.", "job_reference": job_ref}
+
+
+@app.delete("/api/profile/saved-jobs/{job_ref}")
+async def remove_bookmark(job_ref: str, user: Dict = Depends(get_current_user)):
+    """Remove a bookmarked job for the current user."""
+    database.remove_user_job_bookmark(user["id"], job_ref)
+    return {"status": "success", "message": "Bookmark removed.", "job_reference": job_ref}
+

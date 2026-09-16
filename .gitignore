@@ -20,3 +20,8 @@ data/cron.log
 # IDE & Editor
 .vscode/
 .idea/
+
+# User Data & Production Storage (Decoupled from scraped jobs catalog)
+data/users.db*
+data/*.sqlite3
+

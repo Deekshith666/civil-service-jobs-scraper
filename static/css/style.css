@@ -1526,3 +1526,59 @@ input:checked + .toggle-slider:before {
 .text-danger {
     color: var(--danger);
 }
+
+/* Password Complexity Rules Box */
+.password-rules-box {
+    margin-top: 8px;
+    padding: 10px 14px;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+}
+
+.rules-title {
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    font-size: 0.725rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.rules-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 12px;
+}
+
+@media (max-width: 480px) {
+    .rules-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.rule-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+    transition: all 0.2s ease;
+}
+
+.rule-item .rule-icon {
+    font-size: 0.85rem;
+    font-weight: bold;
+    color: var(--text-muted);
+    line-height: 1;
+}
+
+.rule-item.valid {
+    color: #34d399;
+    font-weight: 500;
+}
+
+.rule-item.valid .rule-icon {
+    color: #34d399;
+}
+
