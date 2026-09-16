@@ -14,6 +14,7 @@ from pydantic import BaseModel
 import config
 import database
 from scraper import CivilServiceScraper
+from ai_service import ai_service, DEFAULT_CV_TEMPLATE
 
 app = FastAPI(title="Civil Service Jobs Explorer")
 
@@ -105,10 +106,24 @@ async def serve_css():
     return FileResponse(css_path, media_type="text/css")
 
 
+@app.get("/static/css/tailor.css")
+async def serve_tailor_css():
+    """Explicit static handler for tailor studio stylesheet."""
+    css_path = os.path.join(STATIC_DIR, "css", "tailor.css")
+    return FileResponse(css_path, media_type="text/css")
+
+
 @app.get("/static/js/app.js")
 async def serve_js():
     """Explicit static handler for client controller."""
     js_path = os.path.join(STATIC_DIR, "js", "app.js")
+    return FileResponse(js_path, media_type="application/javascript")
+
+
+@app.get("/static/js/tailor.js")
+async def serve_tailor_js():
+    """Explicit static handler for tailor studio controller."""
+    js_path = os.path.join(STATIC_DIR, "js", "tailor.js")
     return FileResponse(js_path, media_type="application/javascript")
 
 
@@ -117,6 +132,14 @@ async def serve_index():
     """Serve the main interactive dashboard UI."""
     index_path = os.path.join(TEMPLATES_DIR, "index.html")
     return FileResponse(index_path)
+
+
+@app.get("/tailor", response_class=HTMLResponse)
+@app.get("/tailor/{ref_code}", response_class=HTMLResponse)
+async def serve_tailor(ref_code: Optional[str] = None):
+    """Serve the dedicated CV Tailor, Keyword & Application Studio UI."""
+    tailor_path = os.path.join(TEMPLATES_DIR, "tailor.html")
+    return FileResponse(tailor_path)
 
 
 @app.get("/api/stats")
@@ -301,6 +324,26 @@ async def get_current_user(
         )
 
     user["token"] = token
+    return user
+
+
+async def get_optional_user(
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None)
+) -> Optional[Dict]:
+    """Retrieve current authenticated user if session exists, else None."""
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:].strip()
+    elif session_token:
+        token = session_token
+
+    if not token:
+        return None
+
+    user = database.get_user_by_session(token)
+    if user:
+        user["token"] = token
     return user
 
 
@@ -510,4 +553,240 @@ async def remove_bookmark(job_ref: str, user: Dict = Depends(get_current_user)):
     """Remove a bookmarked job for the current user."""
     database.remove_user_job_bookmark(user["id"], job_ref)
     return {"status": "success", "message": "Bookmark removed.", "job_reference": job_ref}
+
+
+# ==========================================
+# Application Studio & AI Tailoring Endpoints
+# ==========================================
+
+def extract_text_from_file_bytes(content: bytes, filename: str) -> str:
+    ext = os.path.splitext(filename)[1].lower()
+    if ext == ".pdf":
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(content))
+            pages_text = [p.extract_text() or "" for p in reader.pages]
+            return "\n\n".join(pages_text).strip()
+        except Exception as e:
+            return f"Error reading PDF: {e}"
+    elif ext in [".docx", ".doc"]:
+        try:
+            import docx
+            doc = docx.Document(io.BytesIO(content))
+            return "\n\n".join([p.text for p in doc.paragraphs if p.text.strip()]).strip()
+        except Exception as e:
+            return f"Error reading Word document: {e}"
+    else:
+        try:
+            return content.decode("utf-8")
+        except UnicodeDecodeError:
+            return content.decode("latin-1", errors="ignore")
+
+
+class AIAnalyzeRequest(BaseModel):
+    cv_text: str
+    job_data: Dict
+    api_key: Optional[str] = None
+    provider: Optional[str] = "openai"
+
+
+class AIQuestionRequest(BaseModel):
+    keyword: str
+    category: str
+    job_title: str
+    api_key: Optional[str] = None
+    provider: Optional[str] = "openai"
+
+
+class AIIntegrateRequest(BaseModel):
+    keyword: str
+    user_experience: str
+    cv_text: str
+    job_title: str
+    api_key: Optional[str] = None
+    provider: Optional[str] = "openai"
+
+
+class AIPersonalStatementRequest(BaseModel):
+    cv_text: str
+    job_data: Dict
+    target_words: Optional[int] = 750
+    focus_behaviours: Optional[List[str]] = None
+    api_key: Optional[str] = None
+    provider: Optional[str] = "openai"
+
+
+class AICoverLetterRequest(BaseModel):
+    cv_text: str
+    job_data: Dict
+    api_key: Optional[str] = None
+    provider: Optional[str] = "openai"
+
+
+@app.get("/api/jobs/{ref_code}/full-advert")
+async def get_full_job_advert(ref_code: str, user: Optional[Dict] = Depends(get_optional_user)):
+    """Fetch complete job posting details, advert description, and user's primary CV text."""
+    job = database.get_job_by_reference(ref_code)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    # Scrape full advert body from civil service portal
+    scraper = CivilServiceScraper()
+    advert_data = scraper.fetch_full_job_advert(job.get("job_url", ""))
+
+    combined = dict(job)
+    combined.update(advert_data)
+
+    initial_cv_text = DEFAULT_CV_TEMPLATE
+    user_has_custom_cv = False
+    active_resume_name = None
+    user_resumes_list = []
+
+    if user:
+        user_resumes_list = database.get_user_resumes(user["id"])
+        primary_resume = database.get_primary_resume_record(user["id"])
+        if primary_resume and primary_resume.get("file_content"):
+            extracted = extract_text_from_file_bytes(
+                primary_resume["file_content"],
+                primary_resume.get("filename", "resume.pdf")
+            )
+            if extracted and len(extracted.strip()) > 20:
+                initial_cv_text = extracted
+                user_has_custom_cv = True
+                active_resume_name = primary_resume.get("filename")
+
+    return {
+        "status": "success",
+        "job": combined,
+        "default_cv_template": DEFAULT_CV_TEMPLATE,
+        "initial_cv_text": initial_cv_text,
+        "user_has_custom_cv": user_has_custom_cv,
+        "active_resume_name": active_resume_name,
+        "user_resumes": user_resumes_list,
+        "user": {"id": user["id"], "username": user["username"], "email": user["email"]} if user else None
+    }
+
+
+@app.post("/api/ai/analyze")
+async def analyze_cv(request: AIAnalyzeRequest):
+    """Analyze CV against job advert keywords and compute ATS score."""
+    analysis = ai_service.analyze_cv_keywords(
+        cv_text=request.cv_text,
+        job_data=request.job_data,
+        api_key=request.api_key,
+        provider=request.provider or "openai"
+    )
+    return {"status": "success", "analysis": analysis}
+
+
+@app.post("/api/ai/ask-keyword-question")
+async def ask_keyword_question(request: AIQuestionRequest):
+    """Generate interactive clarification question asking the candidate about a missing keyword."""
+    res = ai_service.generate_keyword_question(
+        keyword=request.keyword,
+        category=request.category,
+        job_title=request.job_title,
+        api_key=request.api_key,
+        provider=request.provider or "openai"
+    )
+    return {"status": "success", "result": res}
+
+
+@app.post("/api/ai/integrate-keyword")
+async def integrate_keyword(request: AIIntegrateRequest):
+    """Synthesize candidate's response into a tailored, humanized CV bullet point and placement recommendation."""
+    res = ai_service.integrate_keyword_suggestion(
+        keyword=request.keyword,
+        user_experience=request.user_experience,
+        cv_text=request.cv_text,
+        job_title=request.job_title,
+        api_key=request.api_key,
+        provider=request.provider or "openai"
+    )
+    return {"status": "success", "suggestion": res}
+
+
+@app.post("/api/ai/personal-statement")
+async def generate_statement(request: AIPersonalStatementRequest):
+    """Generate Civil Service Success Profiles Personal Statement."""
+    res = ai_service.generate_personal_statement(
+        cv_text=request.cv_text,
+        job_data=request.job_data,
+        target_words=request.target_words or 750,
+        focus_behaviours=request.focus_behaviours,
+        api_key=request.api_key,
+        provider=request.provider or "openai"
+    )
+    return {"status": "success", "result": res}
+
+
+@app.post("/api/ai/cover-letter")
+async def generate_letter(request: AICoverLetterRequest):
+    """Generate tailored UK Civil Service cover letter."""
+    res = ai_service.generate_cover_letter(
+        cv_text=request.cv_text,
+        job_data=request.job_data,
+        api_key=request.api_key,
+        provider=request.provider or "openai"
+    )
+    return {"status": "success", "result": res}
+
+
+@app.post("/api/cv/extract-text")
+async def extract_cv_text(
+    file: UploadFile = File(...),
+    user: Optional[Dict] = Depends(get_optional_user)
+):
+    """Upload a PDF, Word, or text file and extract text directly for the studio editor."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file uploaded.")
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File exceeds 10MB limit.")
+
+    text = extract_text_from_file_bytes(content, file.filename)
+
+    saved = False
+    if user:
+        try:
+            database.add_user_resume(
+                user_id=user["id"],
+                filename=file.filename,
+                description=f"Studio Upload ({file.filename})",
+                file_content=content,
+                content_type=file.content_type or "application/pdf",
+                is_primary=True
+            )
+            saved = True
+        except Exception:
+            pass
+
+    return {
+        "status": "success",
+        "filename": file.filename,
+        "text": text,
+        "saved_to_profile": saved
+    }
+
+
+@app.get("/api/profile/resumes/{resume_id}/text")
+async def get_resume_text(resume_id: int, user: Dict = Depends(get_current_user)):
+    """Fetch text of a specific uploaded resume for the studio editor."""
+    record = database.get_resume_by_id(resume_id, user["id"])
+    if not record or not record.get("file_content"):
+        raise HTTPException(status_code=404, detail="Resume not found.")
+
+    text = extract_text_from_file_bytes(record["file_content"], record.get("filename", "resume.pdf"))
+    return {
+        "status": "success",
+        "id": record["id"],
+        "filename": record["filename"],
+        "text": text
+    }
+
+
+@app.get("/api/cv/default-template")
+async def get_default_cv_template():
+    """Retrieve default Civil Service CV markdown template."""
+    return {"template": DEFAULT_CV_TEMPLATE}
 

@@ -310,6 +310,44 @@ class CivilServiceScraper:
             logger.debug(f"Failed to fetch detail metadata for {job_url}: {e}")
             return {}
 
+    def fetch_full_job_advert(self, job_url: str) -> dict:
+        """Fetch comprehensive vacancy details and advert description from vacancy page."""
+        try:
+            res = self.session.get(job_url, timeout=REQUEST_TIMEOUT)
+            if "originalRequestToken" in res.text:
+                self._bypass_protection_if_needed(res.text)
+                res = self.session.get(job_url, timeout=REQUEST_TIMEOUT)
+
+            if res.status_code != 200:
+                return {}
+
+            soup = BeautifulSoup(res.text, "html.parser")
+            fields = {}
+            for f in soup.find_all("div", class_="vac_display_field"):
+                h = f.find(["h3", "h4", "span"])
+                val = f.find("div", class_="vac_display_field_value")
+                if h and val:
+                    h_text = h.get_text(strip=True).lower()
+                    val_text = val.get_text(separator="\n", strip=True)
+                    fields[h_text] = val_text
+
+            return {
+                "job_grade": fields.get("job grade", ""),
+                "contract_type": fields.get("contract type", ""),
+                "working_pattern": fields.get("working pattern", ""),
+                "role_type": fields.get("type of role", ""),
+                "job_summary": fields.get("job summary", ""),
+                "job_description": fields.get("job description", ""),
+                "person_specification": fields.get("person specification", ""),
+                "behaviours": fields.get("behaviours", ""),
+                "technical_skills": fields.get("technical skills", ""),
+                "selection_process": fields.get("selection process details", ""),
+                "all_fields": fields
+            }
+        except Exception as e:
+            logger.warning(f"Failed to fetch full job advert for {job_url}: {e}")
+            return {}
+
     def enrich_jobs(self, limit: Optional[int] = None, max_workers: int = 6, progress_callback: Optional[Callable[[dict], None]] = None) -> int:
         """Fetch and store detailed metadata (grade, contract, pattern, role) for jobs in database."""
         from database import get_jobs_missing_details, update_job_metadata

@@ -561,6 +561,15 @@ def count_jobs(
         return cursor.fetchone()[0]
 
 
+def get_job_by_reference(reference_number: str) -> Optional[Dict]:
+    """Retrieve full job post details for a single reference number."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM jobs WHERE reference_number = ?", (reference_number,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
 def get_departments() -> List[str]:
     """Get unique list of departments."""
     with get_db_connection() as conn:
@@ -1023,6 +1032,21 @@ def get_resume_by_id(resume_id: int, user_id: int) -> Optional[Dict]:
         if not row:
             return None
         return dict(row)
+
+
+def get_primary_resume_record(user_id: int) -> Optional[Dict]:
+    """Fetch primary resume record for a user, or the most recent resume."""
+    with get_users_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, user_id, filename, description, file_content, file_size, content_type, is_primary, uploaded_at
+            FROM user_resumes
+            WHERE user_id = ?
+            ORDER BY is_primary DESC, id DESC
+            LIMIT 1
+        """, (user_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
 
 def delete_user_resume(resume_id: int, user_id: int) -> bool:

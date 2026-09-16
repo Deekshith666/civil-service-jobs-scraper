@@ -446,9 +446,16 @@ function renderJobs(jobs) {
                         <span class="ref-code">REF: ${escapeHtml(job.reference_number)}</span>
                         ${isNewToday ? '<span class="badge badge-success">New Today</span>' : ''}
                     </div>
-                    <a href="${escapeHtml(job.job_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="padding: 5px 12px; font-size: 0.75rem;">
-                        View Advert &rarr;
-                    </a>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <a href="${escapeHtml(job.job_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="padding: 5px 12px; font-size: 0.75rem;">
+                            View Advert &rarr;
+                        </a>
+                        ${authState.user ? `
+                        <a href="/tailor/${escapeHtml(job.reference_number)}" class="btn btn-primary" style="padding: 5px 12px; font-size: 0.75rem; display:inline-flex; align-items:center; gap:4px;" title="AI Tailor CV, Personal Statement & Cover Letter">
+                            <span>Tailor Application</span> ✨
+                        </a>
+                        ` : ''}
+                    </div>
                 </div>
             </article>
         `;
@@ -1056,6 +1063,10 @@ function renderAuthUI() {
         elements.openAuthModalBtn.classList.remove('hidden');
         elements.loggedInUserPill.classList.add('hidden');
         elements.matchProfileBtn.classList.add('hidden');
+    }
+    // Re-render job cards to reflect login state on Tailor buttons
+    if (state.jobs && state.jobs.length > 0) {
+        renderJobCards();
     }
 }
 

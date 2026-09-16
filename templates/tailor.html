@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Application Studio & CV Tailor | Civil Service Jobs Explorer</title>
+    <meta name="description" content="AI-powered CV Tailoring, Interactive Keyword Assistant, Civil Service Personal Statement and Cover Letter Generator with ATS 90+ score optimization.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/tailor.css">
+</head>
+<body class="dark-theme studio-body">
+    <!-- Ambient Background Glows -->
+    <div class="glow-orb glow-top-left"></div>
+    <div class="glow-orb glow-bottom-right"></div>
+
+    <!-- Studio Header Navigation -->
+    <header class="studio-header">
+        <div class="studio-header-left">
+            <a href="/" class="btn btn-secondary back-btn" id="backToJobsBtn" title="Back to Jobs Dashboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="19" y1="12" x2="5" y2="12"></line>
+                    <polyline points="12 19 5 12 12 5"></polyline>
+                </svg>
+                <span>Dashboard</span>
+            </a>
+            <div class="studio-job-meta">
+                <div class="studio-job-title-row">
+                    <h1 class="studio-job-title" id="studioJobTitle">Loading Job Advert...</h1>
+                    <span class="badge badge-info" id="studioJobRef">REF: --</span>
+                </div>
+                <div class="studio-job-sub" id="studioJobSub">
+                    <span id="studioDept">Department</span> &bull; 
+                    <span id="studioSalary">Salary</span> &bull; 
+                    <span id="studioLocation">Location</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="studio-header-right">
+            <!-- Real-time ATS Score Gauge Badge -->
+            <div class="ats-gauge-container" id="atsGaugeContainer" title="Real-time ATS Compatibility Score">
+                <div class="ats-gauge-circle">
+                    <svg viewBox="0 0 36 36" class="circular-chart">
+                        <path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                        <path id="atsCircleProgress" class="circle-progress" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                    </svg>
+                    <span class="ats-percent" id="atsPercentValue">--%</span>
+                </div>
+                <div class="ats-gauge-info">
+                    <span class="ats-status-label" id="atsStatusLabel">Analyzing...</span>
+                    <span class="ats-sub-hint" id="atsSubHint">Targeting 90%+ ATS</span>
+                </div>
+            </div>
+
+            <!-- AI Model Settings Button -->
+            <button id="openAiSettingsBtn" class="btn btn-secondary icon-btn-label" title="Configure AI Provider & Key">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+                <span id="aiProviderLabel">AI Settings</span>
+            </button>
+
+            <!-- Export CV Dropdown -->
+            <div class="export-dropdown-wrapper">
+                <button id="exportCvBtn" class="btn btn-primary glow-btn" title="Download or Print CV">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    <span>Export CV</span>
+                    <span class="dropdown-caret">&dtrif;</span>
+                </button>
+                <div class="export-menu hidden" id="exportMenu">
+                    <button class="export-menu-item" id="exportPdfBtn">
+                        <span class="export-icon">📄</span>
+                        <div class="export-item-text">
+                            <strong>Download PDF Document</strong>
+                            <span>Print-ready ATS format</span>
+                        </div>
+                    </button>
+                    <button class="export-menu-item" id="exportDocxBtn">
+                        <span class="export-icon">📝</span>
+                        <div class="export-item-text">
+                            <strong>Download Word (.doc)</strong>
+                            <span>Editable Microsoft Word file</span>
+                        </div>
+                    </button>
+                    <button class="export-menu-item" id="copyCvTextBtn">
+                        <span class="export-icon">📋</span>
+                        <div class="export-item-text">
+                            <strong>Copy Full Text</strong>
+                            <span>Copy formatted markdown</span>
+                        </div>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Split Studio Workspace -->
+    <div class="studio-workspace">
+        <!-- LEFT PANE: Interactive PDF / Doc Editor Canvas -->
+        <section class="editor-pane">
+            <div class="editor-top-toolbar">
+                <div class="toolbar-group">
+                    <span class="toolbar-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                        </svg>
+                        <span>CV Document Editor</span>
+                    </span>
+                    <span class="doc-badge" id="docTypeBadge">Default Template</span>
+                    <select id="userResumeSelect" class="form-control-sm hidden" style="font-size:0.75rem; padding: 2px 6px; max-width: 180px;" title="Switch uploaded CV"></select>
+                </div>
+
+                <!-- Text formatting tools -->
+                <div class="formatting-tools">
+                    <button class="tool-btn" id="toolBold" title="Bold (Ctrl+B)"><strong>B</strong></button>
+                    <button class="tool-btn" id="toolItalic" title="Italic (Ctrl+I)"><em>I</em></button>
+                    <button class="tool-btn" id="toolH2" title="Section Heading (H2)">H2</button>
+                    <button class="tool-btn" id="toolH3" title="Sub Heading (H3)">H3</button>
+                    <button class="tool-btn" id="toolBullet" title="Bullet List">&bull; List</button>
+                    <span class="tool-divider"></span>
+                    <button class="tool-btn-subtle" id="uploadCvFileBtn" title="Upload an existing CV (.pdf, .docx, .txt)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <span>Upload CV</span>
+                    </button>
+                    <input type="file" id="cvFileInput" accept=".pdf,.docx,.doc,.txt" class="hidden">
+                    <button class="tool-btn-subtle" id="resetToDefaultCvBtn" title="Reset to standard Civil Service CV">
+                        Reset
+                    </button>
+                </div>
+            </div>
+
+            <!-- Realistic A4 Paper Simulation Container -->
+            <div class="editor-scroll-container">
+                <div class="doc-paper-wrapper">
+                    <div class="doc-paper-shadow">
+                        <!-- Editable Document Canvas -->
+                        <div id="cvDocumentCanvas" class="doc-paper-sheet" contenteditable="true" spellcheck="true" data-placeholder="Paste or write your CV here...">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Editor Bottom Status Bar -->
+            <div class="editor-footer-bar">
+                <div class="footer-stat">Words: <strong id="editorWordCount">0</strong></div>
+                <div class="footer-stat">Characters: <strong id="editorCharCount">0</strong></div>
+                <div class="footer-stat text-success" id="editorSyncStatus">
+                    <span class="sync-dot"></span> Live ATS Sync Active
+                </div>
+            </div>
+        </section>
+
+        <!-- RIGHT PANE: AI Copilot & Job Analysis Workspace -->
+        <aside class="copilot-pane">
+            <!-- Studio Tab Headers -->
+            <div class="copilot-tabs-header">
+                <button class="copilot-tab active" data-tab="keywordsTab">
+                    <span class="tab-icon">🎯</span>
+                    <span>Keywords & ATS</span>
+                </button>
+                <button class="copilot-tab" data-tab="statementTab">
+                    <span class="tab-icon">📜</span>
+                    <span>Personal Statement</span>
+                </button>
+                <button class="copilot-tab" data-tab="letterTab">
+                    <span class="tab-icon">✉️</span>
+                    <span>Cover Letter</span>
+                </button>
+                <button class="copilot-tab" data-tab="advertTab">
+                    <span class="tab-icon">📋</span>
+                    <span>Job Advert</span>
+                </button>
+            </div>
+
+            <!-- TAB 1: Keywords & ATS Scoring -->
+            <div class="copilot-tab-panel active" id="keywordsTab">
+                <!-- Live ATS Score Card -->
+                <div class="ats-summary-card">
+                    <div class="ats-summary-header">
+                        <div>
+                            <span class="ats-summary-label">ATS COMPATIBILITY SCORE</span>
+                            <div class="ats-summary-number-row">
+                                <h2 class="ats-large-score" id="panelAtsScore">--</h2>
+                                <span class="ats-score-scale">/ 100</span>
+                                <span class="ats-status-badge" id="panelAtsBadge">Analyzing</span>
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" id="reanalyzeBtn" title="Recalculate ATS Match">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                            </svg>
+                            <span>Re-scan</span>
+                        </button>
+                    </div>
+
+                    <!-- 4-pillar ATS Breakdown Metrics -->
+                    <div class="ats-breakdown-grid">
+                        <div class="breakdown-item">
+                            <div class="breakdown-labels">
+                                <span>Essential Keywords</span>
+                                <strong id="scoreKeywordsVal">--/40</strong>
+                            </div>
+                            <div class="mini-progress-bar"><div class="mini-bar-fill" id="barKeywords" style="width: 0%"></div></div>
+                        </div>
+                        <div class="breakdown-item">
+                            <div class="breakdown-labels">
+                                <span>Civil Service Behaviours</span>
+                                <strong id="scoreBehavioursVal">--/20</strong>
+                            </div>
+                            <div class="mini-progress-bar"><div class="mini-bar-fill" id="barBehaviours" style="width: 0%"></div></div>
+                        </div>
+                        <div class="breakdown-item">
+                            <div class="breakdown-labels">
+                                <span>Action Metrics & Verbs</span>
+                                <strong id="scoreMetricsVal">--/20</strong>
+                            </div>
+                            <div class="mini-progress-bar"><div class="mini-bar-fill" id="barMetrics" style="width: 0%"></div></div>
+                        </div>
+                        <div class="breakdown-item">
+                            <div class="breakdown-labels">
+                                <span>Structure & Headings</span>
+                                <strong id="scoreFormattingVal">--/20</strong>
+                            </div>
+                            <div class="mini-progress-bar"><div class="mini-bar-fill" id="barFormatting" style="width: 0%"></div></div>
+                        </div>
+                    </div>
+
+                    <!-- Actionable ATS Optimization Tips -->
+                    <div class="ats-tips-box" id="atsTipsBox">
+                        <div class="tips-title">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="16" x2="12" y2="12"></line>
+                                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                            </svg>
+                            <span>Recommendations to reach 90%+ score:</span>
+                        </div>
+                        <ul class="tips-list" id="atsTipsList">
+                            <li>Scanning CV contents against job vacancy specifications...</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Keywords Workspace Filter Chips -->
+                <div class="keyword-section-header">
+                    <h3 class="section-heading">Key Job Skills & Competencies</h3>
+                    <div class="keyword-filter-chips">
+                        <button class="chip-filter active" data-filter="all">All (<span id="countAllKw">0</span>)</button>
+                        <button class="chip-filter" data-filter="missing">Missing ⚠️ (<span id="countMissingKw">0</span>)</button>
+                        <button class="chip-filter" data-filter="matched">Matched ✅ (<span id="countMatchedKw">0</span>)</button>
+                    </div>
+                </div>
+
+                <!-- Interactive Keyword List -->
+                <div class="keywords-scroll-list" id="keywordsListContainer">
+                    <div class="empty-state-loading">
+                        <div class="spinner"></div>
+                        <p>Extracting essential criteria and civil service behaviours...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 2: Civil Service Personal Statement Generator -->
+            <div class="copilot-tab-panel" id="statementTab">
+                <div class="statement-builder-card">
+                    <div class="statement-card-header">
+                        <div>
+                            <h3 class="section-heading">Civil Service Statement of Suitability</h3>
+                            <p class="section-sub">Generates STAR-evidence tailored to this vacancy's Success Profiles (strictly humanized, untracked, zero AI clichés).</p>
+                        </div>
+                    </div>
+
+                    <!-- Statement Controls -->
+                    <div class="statement-controls">
+                        <div class="control-row">
+                            <label for="statementWordCountSelect">Target Word Count:</label>
+                            <select id="statementWordCountSelect" class="form-control-sm">
+                                <option value="500">500 words (Brief Statement)</option>
+                                <option value="750" selected>750 words (Standard Civil Service)</option>
+                                <option value="1000">1,000 words (Comprehensive Evidence)</option>
+                                <option value="1250">1,250 words (Senior / Specialist)</option>
+                            </select>
+                        </div>
+
+                        <div class="control-row">
+                            <label>Civil Service Behaviours to Focus on:</label>
+                            <div class="behaviours-checkbox-group" id="behavioursCheckboxes">
+                                <label class="checkbox-pill"><input type="checkbox" value="Delivering at Pace" checked> Delivering at Pace</label>
+                                <label class="checkbox-pill"><input type="checkbox" value="Making Effective Decisions" checked> Making Effective Decisions</label>
+                                <label class="checkbox-pill"><input type="checkbox" value="Communicating and Influencing" checked> Communicating and Influencing</label>
+                                <label class="checkbox-pill"><input type="checkbox" value="Working Together"> Working Together</label>
+                                <label class="checkbox-pill"><input type="checkbox" value="Managing a Quality Service"> Managing a Quality Service</label>
+                            </div>
+                        </div>
+
+                        <button id="generateStatementBtn" class="btn btn-primary glow-btn full-width">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                            </svg>
+                            <span>Generate Tailored Personal Statement</span>
+                        </button>
+                    </div>
+
+                    <!-- Statement Output Container -->
+                    <div class="statement-output-wrapper">
+                        <div class="output-top-bar">
+                            <div class="output-words-stat">Words: <strong id="statementActualWords">0</strong></div>
+                            <div class="output-actions">
+                                <button class="btn-icon-subtle" id="copyStatementBtn" title="Copy to Clipboard">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                    </svg>
+                                    <span>Copy</span>
+                                </button>
+                                <button class="btn-icon-subtle" id="downloadStatementBtn" title="Download Text">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="7 10 12 15 17 10"></polyline>
+                                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                                    </svg>
+                                    <span>Download</span>
+                                </button>
+                            </div>
+                        </div>
+                        <textarea id="statementOutputText" class="statement-textarea" placeholder="Click 'Generate Tailored Personal Statement' above to draft your statement using STAR framework..."></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: Cover Letter Generator -->
+            <div class="copilot-tab-panel" id="letterTab">
+                <div class="letter-builder-card">
+                    <div class="statement-card-header">
+                        <div>
+                            <h3 class="section-heading">Civil Service Cover Letter</h3>
+                            <p class="section-sub">Formal UK Civil Service application letter addressing the specific department and vacancy reference.</p>
+                        </div>
+                    </div>
+
+                    <button id="generateCoverLetterBtn" class="btn btn-primary glow-btn full-width" style="margin-bottom: 14px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                            <polyline points="22,6 12,13 2,6"></polyline>
+                        </svg>
+                        <span>Generate Covering Letter</span>
+                    </button>
+
+                    <div class="statement-output-wrapper">
+                        <div class="output-top-bar">
+                            <div class="output-words-stat">Words: <strong id="letterActualWords">0</strong></div>
+                            <div class="output-actions">
+                                <button class="btn-icon-subtle" id="copyLetterBtn" title="Copy to Clipboard">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                    </svg>
+                                    <span>Copy</span>
+                                </button>
+                                <button class="btn-icon-subtle" id="downloadLetterBtn" title="Download Text">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="7 10 12 15 17 10"></polyline>
+                                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                                    </svg>
+                                    <span>Download</span>
+                                </button>
+                            </div>
+                        </div>
+                        <textarea id="letterOutputText" class="statement-textarea" placeholder="Click 'Generate Covering Letter' to draft your letter..."></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 4: Full Job Advert Details -->
+            <div class="copilot-tab-panel" id="advertTab">
+                <div class="advert-details-card">
+                    <div class="advert-header-row">
+                        <h3 class="section-heading" id="advertTitleDisplay">Job Advert Details</h3>
+                        <a href="#" id="viewOriginalGovUkLink" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">
+                            View on GOV.UK &rarr;
+                        </a>
+                    </div>
+
+                    <div class="advert-meta-grid" id="advertMetaGrid">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <div class="advert-sections-container" id="advertSectionsContainer">
+                        <div class="advert-section">
+                            <h4 class="advert-section-title">Job Summary</h4>
+                            <div class="advert-section-body" id="advertJobSummary">Loading summary...</div>
+                        </div>
+                        <div class="advert-section">
+                            <h4 class="advert-section-title">Job Description & Responsibilities</h4>
+                            <div class="advert-section-body" id="advertJobDesc">Loading description...</div>
+                        </div>
+                        <div class="advert-section">
+                            <h4 class="advert-section-title">Person Specification & Essential Criteria</h4>
+                            <div class="advert-section-body" id="advertPersonSpec">Loading specification...</div>
+                        </div>
+                        <div class="advert-section">
+                            <h4 class="advert-section-title">Civil Service Behaviours</h4>
+                            <div class="advert-section-body" id="advertBehaviours">Loading behaviours...</div>
+                        </div>
+                        <div class="advert-section">
+                            <h4 class="advert-section-title">Technical Skills & Qualifications</h4>
+                            <div class="advert-section-body" id="advertTechnical">Loading technical skills...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- ======================================================== -->
+    <!-- MODAL 1: Interactive Keyword Clarifier & Interview Q&A   -->
+    <!-- ======================================================== -->
+    <div class="modal-overlay hidden" id="keywordQaModal">
+        <div class="modal-content modal-keyword-qa">
+            <div class="modal-header">
+                <div class="modal-header-icon-group">
+                    <span class="qa-badge">AI Keyword Enhancer</span>
+                    <h3 class="modal-title" id="qaModalKeywordTitle">Add Keyword to CV</h3>
+                </div>
+                <button class="modal-close-btn" id="closeQaModalBtn">&times;</button>
+            </div>
+
+            <div class="modal-body">
+                <!-- Interview Question generated by AI -->
+                <div class="qa-question-box">
+                    <div class="qa-coach-header">
+                        <span class="coach-avatar">👨‍💼</span>
+                        <div class="coach-meta">
+                            <strong>Civil Service Career Coach Question:</strong>
+                            <span id="qaCategoryPill" class="badge badge-primary">Technical Skill</span>
+                        </div>
+                    </div>
+                    <div class="qa-question-text" id="qaQuestionText">
+                        Loading contextual interview question...
+                    </div>
+                </div>
+
+                <!-- User input form -->
+                <div class="form-group" style="margin-top: 14px;">
+                    <label for="qaUserExperienceInput">
+                        Your Real Experience or Practical Example:
+                        <span class="form-hint">(1-2 sentences: mention your role, actions, or metrics)</span>
+                    </label>
+                    <textarea id="qaUserExperienceInput" class="form-control" rows="3" placeholder="e.g., At my previous role, I supervised the workshop daily, maintained compliance with H&S risk assessments, and achieved zero incidents across 12 months..."></textarea>
+                </div>
+
+                <div class="qa-actions-row">
+                    <button type="button" id="qaGenerateBulletBtn" class="btn btn-primary glow-btn">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                        </svg>
+                        <span>Craft Humanized CV Bullet Point</span>
+                    </button>
+                    <button type="button" id="qaQuickAddDefaultBtn" class="btn btn-secondary">
+                        Use Standard Phrasing
+                    </button>
+                </div>
+
+                <!-- Generated Suggestion Preview Card -->
+                <div class="qa-suggestion-result hidden" id="qaSuggestionResult">
+                    <div class="suggestion-header">
+                        <span class="badge badge-success">ATS 90+ Optimized & Humanized</span>
+                        <span class="suggestion-placement" id="qaPlacementText">Placement: Experience Section</span>
+                    </div>
+                    <div class="suggestion-bullet-box" id="qaSuggestedBulletBox">
+                        <!-- Suggested bullet goes here -->
+                    </div>
+                    <p class="suggestion-explanation" id="qaExplanationText">
+                        Seamlessly integrates the keyword with active verbs and zero AI telltales.
+                    </p>
+                    <div class="suggestion-action-bar">
+                        <button type="button" id="qaInsertIntoCvBtn" class="btn btn-primary glow-btn">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                            <span>Insert Into CV Editor & Recalculate ATS</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======================================================== -->
+    <!-- MODAL 2: AI Provider & API Key Settings                  -->
+    <!-- ======================================================== -->
+    <div class="modal-overlay hidden" id="aiSettingsModal">
+        <div class="modal-content modal-ai-settings">
+            <div class="modal-header">
+                <div class="modal-header-icon-group">
+                    <h3 class="modal-title">AI Engine & Provider Settings</h3>
+                </div>
+                <button class="modal-close-btn" id="closeAiSettingsBtn">&times;</button>
+            </div>
+
+            <div class="modal-body">
+                <p class="settings-intro">
+                    Configure your preferred AI engine for keyword suggestion and personal statement generation.
+                    Keys are safely stored in your browser's private local storage.
+                </p>
+
+                <div class="form-group">
+                    <label for="aiProviderSelect">Active Provider:</label>
+                    <select id="aiProviderSelect" class="form-control">
+                        <option value="openai">OpenAI (ChatGPT - gpt-4o-mini / gpt-4o)</option>
+                        <option value="gemini">Google Gemini (Gemini 1.5 / 2.0 Flash - Free Tier)</option>
+                        <option value="offline">Smart Heuristic Engine (Offline / Zero API Key Needed)</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="apiKeyFormGroup">
+                    <label for="aiApiKeyInput">API Key:</label>
+                    <input type="password" id="aiApiKeyInput" class="form-control" placeholder="sk-... or AIzaSy...">
+                    <span class="form-hint" id="apiKeyHint">
+                        Enter your OpenAI API key or leave blank if configured in server <code>.env</code>.
+                    </span>
+                </div>
+
+                <div class="settings-feature-list">
+                    <div class="feature-item">
+                        <span class="feature-icon">🛡️</span>
+                        <div>
+                            <strong>Humanized & Untracked Output</strong>
+                            <p>Automatically eliminates AI clichés ('tapestry', 'delve', 'beacon') so applications read naturally and pass AI screening filters.</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">📈</span>
+                        <div>
+                            <strong>Guaranteed ATS 90+ Scoring Guidance</strong>
+                            <p>Live metric audit checks hard skills, civil service behaviours, quantified metrics, and standard ATS formatting.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-actions-right">
+                    <button type="button" id="saveAiSettingsBtn" class="btn btn-primary glow-btn">Save Settings</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 3: Login Required Gate -->
+    <div class="modal-overlay hidden" id="authGateModal">
+        <div class="modal-content" style="max-width: 440px; text-align: center; padding: 32px 24px;">
+            <div style="font-size: 2.8rem; margin-bottom: 12px;">🔒</div>
+            <h3 class="modal-title" style="margin-bottom: 8px;">Account Sign In Required</h3>
+            <p style="font-size: 0.85rem; color: #94a3b8; line-height: 1.5; margin-bottom: 22px;">
+                Tailoring applications and matching keywords requires being signed in to your account with your uploaded CV.
+            </p>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <a href="/?auth=login" class="btn btn-primary glow-btn" style="justify-content:center; padding: 10px 16px;">
+                    Sign In or Register Now
+                </a>
+                <a href="/" class="btn btn-secondary" style="justify-content:center; padding: 9px 16px;">
+                    Return to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script Controller -->
+    <script src="/static/js/tailor.js"></script>
+</body>
+</html>
