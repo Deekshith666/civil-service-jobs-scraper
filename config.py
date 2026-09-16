@@ -8,9 +8,27 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent
 BUNDLED_DATA_DIR = PROJECT_DIR / "data"
 BUNDLED_DB_PATH = BUNDLED_DATA_DIR / "jobs.db"
+ENV_FILE_PATH = PROJECT_DIR / ".env"
+
+# Auto-load .env file if present
+if ENV_FILE_PATH.exists():
+    try:
+        with open(ENV_FILE_PATH, "r", encoding="utf-8") as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if not _line or _line.startswith("#") or "=" not in _line:
+                    continue
+                _k, _v = _line.split("=", 1)
+                _k = _k.strip()
+                _v = _v.strip().strip("'\"")
+                if _k and _k not in os.environ:
+                    os.environ[_k] = _v
+    except Exception:
+        pass
 
 # Environment Detection (Vercel Serverless / AWS Lambda)
 IS_VERCEL = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+
 
 # Cloud Database Connection Options (for permanent Vercel persistence of user data)
 DATABASE_URL = os.getenv("DATABASE_URL")

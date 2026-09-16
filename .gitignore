@@ -21,7 +21,14 @@ data/cron.log
 .vscode/
 .idea/
 
+# Environment Secrets & Local Config
+.env
+.env.*
+*.env
+!.env.example
+
 # User Data & Production Storage (Decoupled from scraped jobs catalog)
 data/users.db*
 data/*.sqlite3
+
 
