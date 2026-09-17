@@ -188,6 +188,7 @@ async def get_jobs(
     role_type: str = Query("", description="Filter by type of role"),
     working_pattern: str = Query("", description="Filter by working pattern"),
     contract_type: str = Query("", description="Filter by contract type"),
+    number_of_jobs: str = Query("", description="Filter by number of jobs/posts"),
     only_new_today: bool = Query(False, description="Filter to jobs first detected today"),
     limit: int = Query(24, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -208,6 +209,7 @@ async def get_jobs(
         role_type=role_type,
         working_pattern=working_pattern,
         contract_type=contract_type,
+        number_of_jobs=number_of_jobs,
         only_new_today=only_new_today,
         limit=limit,
         offset=offset,
@@ -224,6 +226,7 @@ async def get_jobs(
         role_type=role_type,
         working_pattern=working_pattern,
         contract_type=contract_type,
+        number_of_jobs=number_of_jobs,
         only_new_today=only_new_today
     )
     return {

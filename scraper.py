@@ -300,11 +300,24 @@ class CivilServiceScraper:
                     val_text = val.get_text(separator=", ", strip=True)
                     fields[h.get_text(strip=True).lower()] = val_text
 
+            num_jobs = 1
+            num_str = (
+                fields.get("number of jobs available") or
+                fields.get("number of jobs") or
+                fields.get("number of vacancies") or
+                fields.get("number of posts")
+            )
+            if num_str:
+                m = re.search(r'\d+', num_str)
+                if m:
+                    num_jobs = int(m.group())
+
             return {
                 "job_grade": fields.get("job grade"),
                 "contract_type": fields.get("contract type"),
                 "working_pattern": fields.get("working pattern"),
                 "role_type": fields.get("type of role"),
+                "number_of_jobs": num_jobs,
             }
         except Exception as e:
             logger.debug(f"Failed to fetch detail metadata for {job_url}: {e}")
@@ -331,11 +344,24 @@ class CivilServiceScraper:
                     val_text = val.get_text(separator="\n", strip=True)
                     fields[h_text] = val_text
 
+            num_jobs = 1
+            num_str = (
+                fields.get("number of jobs available") or
+                fields.get("number of jobs") or
+                fields.get("number of vacancies") or
+                fields.get("number of posts")
+            )
+            if num_str:
+                m = re.search(r'\d+', num_str)
+                if m:
+                    num_jobs = int(m.group())
+
             return {
                 "job_grade": fields.get("job grade", ""),
                 "contract_type": fields.get("contract type", ""),
                 "working_pattern": fields.get("working pattern", ""),
                 "role_type": fields.get("type of role", ""),
+                "number_of_jobs": num_jobs,
                 "job_summary": fields.get("job summary", ""),
                 "job_description": fields.get("job description", ""),
                 "person_specification": fields.get("person specification", ""),

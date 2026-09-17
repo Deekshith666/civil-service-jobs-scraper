@@ -21,6 +21,7 @@ const state = {
     sortBy: 'first_seen_at',
     sortOrder: 'desc',
     jobs: [],
+    numJobs: '',
     isScraping: false,
     isEnriching: false,
     pollInterval: null,
@@ -50,6 +51,7 @@ const elements = {
     filterGradeSelect: document.getElementById('filterGradeSelect'),
     filterPatternSelect: document.getElementById('filterPatternSelect'),
     filterContractSelect: document.getElementById('filterContractSelect'),
+    filterNumJobsSelect: document.getElementById('filterNumJobsSelect'),
     
     summaryLocation: document.getElementById('summaryLocation'),
     summaryRole: document.getElementById('summaryRole'),
@@ -58,6 +60,7 @@ const elements = {
     summaryGrade: document.getElementById('summaryGrade'),
     summaryPattern: document.getElementById('summaryPattern'),
     summaryContract: document.getElementById('summaryContract'),
+    summaryNumJobs: document.getElementById('summaryNumJobs'),
     
     updateResultsBtn: document.getElementById('updateResultsBtn'),
     resetAllFiltersBtn: document.getElementById('resetAllFiltersBtn'),
@@ -306,6 +309,9 @@ function updateAccordionSummaries() {
     elements.summaryGrade.textContent = state.jobGrade ? state.jobGrade : 'No filters selected';
     elements.summaryPattern.textContent = state.workingPattern ? state.workingPattern : 'No filters selected';
     elements.summaryContract.textContent = state.contractType ? state.contractType : 'No filters selected';
+    if (elements.summaryNumJobs) {
+        elements.summaryNumJobs.textContent = state.numJobs ? (state.numJobs === '1' ? 'Single post (1)' : `${state.numJobs} posts`) : 'No filters selected';
+    }
 }
 
 async function fetchJobs() {
@@ -324,6 +330,7 @@ async function fetchJobs() {
     if (state.roleType) params.append("role_type", state.roleType);
     if (state.workingPattern) params.append("working_pattern", state.workingPattern);
     if (state.contractType) params.append("contract_type", state.contractType);
+    if (state.numJobs) params.append("number_of_jobs", state.numJobs);
     if (state.onlyNewToday) params.append("only_new_today", "true");
     params.append("limit", state.limit);
     params.append("offset", offset);
@@ -442,12 +449,22 @@ function renderJobs(jobs) {
                         </svg>
                         <span>Closes: ${escapeHtml(job.closing_date || 'See advert')}</span>
                     </div>
+                    <div class="job-detail-item" title="Number of vacancies available for this role">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="9" cy="7" r="4"></circle>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                        </svg>
+                        <span>Number of jobs: <strong>${job.number_of_jobs || 1}</strong> ${(job.number_of_jobs || 1) === 1 ? 'post' : 'posts'}</span>
+                    </div>
                 </div>
 
                 <div class="job-card-footer">
-                    <div style="display:flex; align-items:center; gap:6px;">
+                    <div style="display:flex; align-items:center; gap:6px; flex-wrap: wrap;">
                         <span class="ref-code">REF: ${escapeHtml(job.reference_number)}</span>
                         ${isNewToday ? '<span class="badge badge-success">New Today</span>' : ''}
+                        ${(job.number_of_jobs && job.number_of_jobs > 1) ? `<span class="badge badge-warning" style="background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); font-size: 0.72rem; padding: 2px 7px;">${job.number_of_jobs} Posts Available</span>` : ''}
                     </div>
                     <div style="display:flex; align-items:center; gap:8px;">
                         <a href="${escapeHtml(job.job_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="padding: 5px 12px; font-size: 0.75rem;">
@@ -575,6 +592,7 @@ function applySidebarFilters() {
     state.jobGrade = elements.filterGradeSelect.value;
     state.workingPattern = elements.filterPatternSelect.value;
     state.contractType = elements.filterContractSelect.value;
+    state.numJobs = elements.filterNumJobsSelect ? elements.filterNumJobsSelect.value : '';
     state.page = 1;
     fetchJobs();
 }
@@ -589,6 +607,7 @@ function resetAllFilters() {
     state.jobGrade = '';
     state.workingPattern = '';
     state.contractType = '';
+    state.numJobs = '';
     state.onlyNewToday = false;
     state.page = 1;
 
@@ -602,6 +621,7 @@ function resetAllFilters() {
     elements.filterGradeSelect.value = '';
     elements.filterPatternSelect.value = '';
     elements.filterContractSelect.value = '';
+    if (elements.filterNumJobsSelect) elements.filterNumJobsSelect.value = '';
     elements.onlyNewTodayCheckbox.checked = false;
 
     document.querySelectorAll('.chip-sm').forEach(c => c.classList.remove('active'));
@@ -796,8 +816,9 @@ function setupEventListeners() {
         elements.filterSalaryMax,
         elements.filterGradeSelect,
         elements.filterPatternSelect,
-        elements.filterContractSelect
-    ].forEach(select => {
+        elements.filterContractSelect,
+        elements.filterNumJobsSelect
+    ].filter(Boolean).forEach(select => {
         select.addEventListener('change', applySidebarFilters);
     });
 

@@ -154,6 +154,7 @@ def init_jobs_db():
                 ("role_type", "TEXT"),
                 ("working_pattern", "TEXT"),
                 ("contract_type", "TEXT"),
+                ("number_of_jobs", "INTEGER DEFAULT 1"),
             ]
             for col_name, col_type in new_columns:
                 if col_name not in existing_cols:
@@ -182,6 +183,7 @@ def init_jobs_db():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_role ON jobs(role_type)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_contract ON jobs(contract_type)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_pattern ON jobs(working_pattern)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_number_of_jobs ON jobs(number_of_jobs)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_run_at ON scrape_logs(run_at)")
             conn.commit()
     except sqlite3.OperationalError as e:
@@ -568,13 +570,15 @@ def update_job_metadata(ref: str, metadata: Dict) -> bool:
                 job_grade = COALESCE(?, job_grade),
                 role_type = COALESCE(?, role_type),
                 working_pattern = COALESCE(?, working_pattern),
-                contract_type = COALESCE(?, contract_type)
+                contract_type = COALESCE(?, contract_type),
+                number_of_jobs = COALESCE(?, number_of_jobs)
             WHERE reference_number = ?
         """, (
             metadata.get("job_grade"),
             metadata.get("role_type"),
             metadata.get("working_pattern"),
             metadata.get("contract_type"),
+            metadata.get("number_of_jobs"),
             ref
         ))
         conn.commit()
@@ -591,6 +595,7 @@ def get_jobs(
     role_type: str = "",
     working_pattern: str = "",
     contract_type: str = "",
+    number_of_jobs: str = "",
     only_new_today: bool = False,
     limit: int = 50,
     offset: int = 0,
@@ -640,6 +645,25 @@ def get_jobs(
         query += " AND contract_type LIKE ?"
         params.append(f"%{contract_type}%")
 
+    if number_of_jobs:
+        if number_of_jobs == "1":
+            query += " AND (number_of_jobs = 1 OR number_of_jobs IS NULL)"
+        elif number_of_jobs in ("2+", "2"):
+            query += " AND number_of_jobs >= 2"
+        elif number_of_jobs in ("3+", "3"):
+            query += " AND number_of_jobs >= 3"
+        elif number_of_jobs in ("5+", "5"):
+            query += " AND number_of_jobs >= 5"
+        elif number_of_jobs in ("10+", "10"):
+            query += " AND number_of_jobs >= 10"
+        else:
+            try:
+                n = int(number_of_jobs.rstrip("+"))
+                query += " AND number_of_jobs >= ?"
+                params.append(n)
+            except ValueError:
+                pass
+
     if only_new_today:
         today_prefix = date.today().isoformat() + "%"
         query += " AND first_seen_at LIKE ?"
@@ -677,6 +701,7 @@ def count_jobs(
     role_type: str = "",
     working_pattern: str = "",
     contract_type: str = "",
+    number_of_jobs: str = "",
     only_new_today: bool = False
 ) -> int:
     """Count total jobs matching all current filter conditions."""
@@ -719,6 +744,25 @@ def count_jobs(
     if contract_type:
         query += " AND contract_type LIKE ?"
         params.append(f"%{contract_type}%")
+
+    if number_of_jobs:
+        if number_of_jobs == "1":
+            query += " AND (number_of_jobs = 1 OR number_of_jobs IS NULL)"
+        elif number_of_jobs in ("2+", "2"):
+            query += " AND number_of_jobs >= 2"
+        elif number_of_jobs in ("3+", "3"):
+            query += " AND number_of_jobs >= 3"
+        elif number_of_jobs in ("5+", "5"):
+            query += " AND number_of_jobs >= 5"
+        elif number_of_jobs in ("10+", "10"):
+            query += " AND number_of_jobs >= 10"
+        else:
+            try:
+                n = int(number_of_jobs.rstrip("+"))
+                query += " AND number_of_jobs >= ?"
+                params.append(n)
+            except ValueError:
+                pass
 
     if only_new_today:
         today_prefix = date.today().isoformat() + "%"
