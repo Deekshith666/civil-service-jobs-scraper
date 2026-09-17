@@ -99,39 +99,46 @@ def _run_enrichment_task(limit: Optional[int], max_workers: int):
         active_enrich_state["is_running"] = False
 
 
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0"
+}
+
+
 @app.get("/static/css/style.css")
 async def serve_css():
     """Explicit static handler for main stylesheet."""
     css_path = os.path.join(STATIC_DIR, "css", "style.css")
-    return FileResponse(css_path, media_type="text/css")
+    return FileResponse(css_path, media_type="text/css", headers=NO_CACHE_HEADERS)
 
 
 @app.get("/static/css/tailor.css")
 async def serve_tailor_css():
     """Explicit static handler for tailor studio stylesheet."""
     css_path = os.path.join(STATIC_DIR, "css", "tailor.css")
-    return FileResponse(css_path, media_type="text/css")
+    return FileResponse(css_path, media_type="text/css", headers=NO_CACHE_HEADERS)
 
 
 @app.get("/static/js/app.js")
 async def serve_js():
     """Explicit static handler for client controller."""
     js_path = os.path.join(STATIC_DIR, "js", "app.js")
-    return FileResponse(js_path, media_type="application/javascript")
+    return FileResponse(js_path, media_type="application/javascript", headers=NO_CACHE_HEADERS)
 
 
 @app.get("/static/js/tailor.js")
 async def serve_tailor_js():
     """Explicit static handler for tailor studio controller."""
     js_path = os.path.join(STATIC_DIR, "js", "tailor.js")
-    return FileResponse(js_path, media_type="application/javascript")
+    return FileResponse(js_path, media_type="application/javascript", headers=NO_CACHE_HEADERS)
 
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
     """Serve the main interactive dashboard UI."""
     index_path = os.path.join(TEMPLATES_DIR, "index.html")
-    return FileResponse(index_path)
+    return FileResponse(index_path, headers=NO_CACHE_HEADERS)
 
 
 @app.get("/tailor", response_class=HTMLResponse)
@@ -139,7 +146,7 @@ async def serve_index():
 async def serve_tailor(ref_code: Optional[str] = None):
     """Serve the dedicated CV Tailor, Keyword & Application Studio UI."""
     tailor_path = os.path.join(TEMPLATES_DIR, "tailor.html")
-    return FileResponse(tailor_path)
+    return FileResponse(tailor_path, headers=NO_CACHE_HEADERS)
 
 
 @app.get("/api/stats")

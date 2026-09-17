@@ -188,6 +188,86 @@ def init_jobs_db():
         logger.warning(f"Jobs DB initialization skipped: {e}")
 
 
+SHILPA_CV_TEXT = """# SHILPA SIVADAS
+London, UK | +44 7700 900789 | shilpasivadas197@gmail.com | linkedin.com/in/shilpa-sivadas
+
+## PROFESSIONAL SUMMARY
+Results-driven Civil Service Operational Specialist and Project Manager with over 7 years of expertise in public sector delivery, workshop supervision, health & safety compliance, and stakeholder engagement. Proven capability in delivering at pace, managing cross-functional teams, and implementing evidence-based operational improvements aligned with Civil Service Success Profiles.
+
+## CORE COMPETENCIES
+- Operational Workflow Management & Public Service Delivery
+- Civil Service Success Profiles & Governance Compliance
+- Health & Safety Compliance, COSHH Risk Assessments & Audits
+- Woodworking Machinery, Equipment Maintenance & Workshop Supervision
+- Team Leadership, Mentoring & Capability Building
+- Quality Assurance, Standards Verification & Process Optimization
+- Stakeholder Engagement & Strategic Cross-Departmental Communication
+- Resource Allocation, Budget Tracking & Continuous Improvement
+
+## PROFESSIONAL EXPERIENCE
+
+### Senior Operations Lead | HM Prison & Probation Service (HMPPS)
+*London & South East* | *2021 - Present*
+- Supervised daily operational workflows and technical workshop activities across 3 regional facilities, achieving a 98% service compliance rate.
+- Enforced strict Health & Safety standards, conducting comprehensive risk assessments and machinery audits resulting in zero reportable HSE incidents over 36 months.
+- Operated and supervised workshop machinery including precision wood processing, tooling, and fabrication equipment.
+- Led and mentored a multidisciplinary team of 16 caseworkers and apprentice technicians, fostering capability building and professional development.
+- Streamlined administrative and case-triage pipelines, reducing backlog by 26% while upholding statutory confidentiality and data governance.
+
+### Project & Operational Delivery Officer | Ministry of Justice (MoJ)
+*London, UK* | *2018 - 2021*
+- Managed cross-departmental delivery milestones for a £2.2M facilities modernization initiative across 5 regional sites.
+- Monitored project risk registers, tracking key performance indicators and reporting bi-weekly delivery progress to executive governance boards.
+- Facilitated working groups with senior civil service stakeholders and trade unions to align operational changes with national policy standards.
+- Implemented continuous improvement methodologies that reduced process turnaround by 21%.
+
+## EDUCATION & QUALIFICATIONS
+- **BSc (Hons) Public Management & Administration (First Class)** | University of London | *2018*
+- **Prince2 Practitioner Certified** | AXELOS | *2020*
+- **IOSH Managing Safely Certified** | Institution of Occupational Safety and Health | *2021*
+- **Level 3 NVQ / City & Guilds in Machine Woodworking & Technical Supervision** | *2019*
+- **Active Enhanced Security Clearance (SC)**
+"""
+
+DEMO_CV_TEXT = """# DEEKSHITH KUMAR
+London, SW1A 2AA | +44 7700 900456 | deekshith.kumar@email.co.uk | linkedin.com/in/deekshith-civil
+
+## PROFESSIONAL SUMMARY
+Dedicated and experienced Public Sector Technical & Operational Specialist with over 7 years of background in workshop management, woodworking machinery operation, and facility supervision. Strong track record of adhering to HSE compliance standards, mentoring apprentices, and delivering at pace within strict departmental schedules.
+
+## CORE COMPETENCIES
+- Woodworking Machinery Operation & Precision Tooling
+- Health & Safety Compliance & COSHH Risk Assessments
+- Workshop Supervision, Equipment Maintenance & Tooling
+- Civil Service Success Profiles & Operational Delivery
+- Quality Assurance, Material Inspections & Precision Standards
+- Inventory & Stock Management, Waste Reduction
+- Apprenticeship Training, Mentoring & Capability Building
+
+## PROFESSIONAL EXPERIENCE
+
+### Workshop Supervisor & Senior Machinist | Ministry of Justice (HMPPS)
+*HMP Isle of Wight & Winchester* | *2021 - Present*
+- Supervised daily woodworking machine operations, ensuring 100% adherence to Safe Operating Procedures and workshop safety protocols.
+- Operated advanced woodworking machinery including circular saws, spindle moulders, surface planers, and edge-banders.
+- Trained and supervised 12 apprentice technicians in machine safety and joinery techniques, resulting in a 98% qualification pass rate.
+- Conducted regular maintenance, tooling replacements, and weekly safety audits, maintaining zero reportable incidents over 36 consecutive months.
+- Managed timber inventory and consumable stock, reducing material waste by 18% through optimized cutting schedules.
+
+### Operations & Production Specialist | HM Facilities & Estates Service
+*Southampton, UK* | *2018 - 2021*
+- Coordinated workshop equipment fabrication and timber fittings across public sector estate refurbishment contracts.
+- Collaborated with cross-functional health and safety inspectors to draft updated risk assessments and emergency protocol guidelines.
+- Delivered weekly operational progress reports to executive project managers, consistently achieving milestones two weeks ahead of schedule.
+
+## EDUCATION & QUALIFICATIONS
+- **Level 3 NVQ Diploma in Machine Woodworking & Joinery** | City & Guilds | *2018*
+- **IOSH Managing Safely Certified** | Institution of Occupational Safety and Health | *2022*
+- **First Aid at Work & Fire Warden Certified** | *2023*
+- **BPSS & Enhanced Security Clearance Active**
+"""
+
+
 def init_users_db():
     """Initialize dedicated user store tables, resumes, sessions, and preferences."""
     try:
@@ -250,6 +330,96 @@ def init_users_db():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(token)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_jobs_user ON user_saved_jobs(user_id)")
+
+            # Auto-seed / Self-heal default users and resumes
+            # 1. demo_applicant
+            cursor.execute("SELECT id FROM users WHERE username = 'demo_applicant'")
+            demo_user = cursor.fetchone()
+            if not demo_user:
+                cursor.execute("""
+                    INSERT INTO users (username, email, password_hash, salt, created_at, preferences_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    "demo_applicant",
+                    "demo.candidate@gov.uk",
+                    "0c93bcc39f52d6423c81562fc83a109abfa1c6b32fe59f1de8d96be6611a57ec",
+                    "7f5351dcde6d653ca2ae514c79478dcb",
+                    datetime.now().isoformat(),
+                    json.dumps({
+                        "locations": ["London", "National"],
+                        "min_salary": 35000,
+                        "max_salary": None,
+                        "job_grade": "Senior Executive Officer (SEO)",
+                        "role_type": "Operational Delivery",
+                        "working_pattern": "Full-time",
+                        "contract_type": "Permanent"
+                    })
+                ))
+                demo_user_id = cursor.lastrowid
+            else:
+                demo_user_id = demo_user["id"]
+
+            cursor.execute("SELECT COUNT(*) as cnt FROM user_resumes WHERE user_id = ?", (demo_user_id,))
+            if cursor.fetchone()["cnt"] == 0:
+                demo_cv_bytes = DEMO_CV_TEXT.encode("utf-8")
+                cursor.execute("""
+                    INSERT INTO user_resumes (
+                        user_id, filename, description, file_content, file_size, content_type, is_primary, uploaded_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+                """, (
+                    demo_user_id,
+                    "Deekshith_Kumar_Civil_Service_CV.txt",
+                    "Primary Civil Service Technical & Operations CV",
+                    demo_cv_bytes,
+                    len(demo_cv_bytes),
+                    "text/plain",
+                    datetime.now().isoformat()
+                ))
+
+            # 2. Shilpasivadas197
+            cursor.execute("SELECT id FROM users WHERE username = 'Shilpasivadas197'")
+            shilpa_user = cursor.fetchone()
+            if not shilpa_user:
+                cursor.execute("""
+                    INSERT INTO users (username, email, password_hash, salt, created_at, preferences_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    "Shilpasivadas197",
+                    "shilpasivadas197@gmail.com",
+                    "e01edd9d5544e53def5e288cc2a820b10d0cb692c2304b2692e2101ee9ba9e4b",
+                    "a187a39f285daaeeb92603e2c4a3f511",
+                    datetime.now().isoformat(),
+                    json.dumps({
+                        "locations": ["London"],
+                        "min_salary": None,
+                        "max_salary": None,
+                        "job_grade": "",
+                        "role_type": "",
+                        "working_pattern": "",
+                        "contract_type": ""
+                    })
+                ))
+                shilpa_user_id = cursor.lastrowid
+            else:
+                shilpa_user_id = shilpa_user["id"]
+
+            cursor.execute("SELECT COUNT(*) as cnt FROM user_resumes WHERE user_id = ?", (shilpa_user_id,))
+            if cursor.fetchone()["cnt"] == 0:
+                shilpa_cv_bytes = SHILPA_CV_TEXT.encode("utf-8")
+                cursor.execute("""
+                    INSERT INTO user_resumes (
+                        user_id, filename, description, file_content, file_size, content_type, is_primary, uploaded_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+                """, (
+                    shilpa_user_id,
+                    "Shilpa_Sivadas_Civil_Service_CV.txt",
+                    "Primary Civil Service Operations & Technical CV",
+                    shilpa_cv_bytes,
+                    len(shilpa_cv_bytes),
+                    "text/plain",
+                    datetime.now().isoformat()
+                ))
+
             conn.commit()
     except Exception as e:
         logger.error(f"Error initializing users database: {e}")

@@ -20,6 +20,7 @@ const state = {
     onlyNewToday: false,
     sortBy: 'first_seen_at',
     sortOrder: 'desc',
+    jobs: [],
     isScraping: false,
     isEnriching: false,
     pollInterval: null,
@@ -334,7 +335,8 @@ async function fetchJobs() {
         const data = await res.json();
         
         state.total = data.total || 0;
-        renderJobs(data.jobs || []);
+        state.jobs = data.jobs || [];
+        renderJobs(state.jobs);
         updatePagination();
         updateToolbarSummary(data.jobs?.length || 0);
         updateAccordionSummaries();
@@ -383,6 +385,7 @@ function renderJobs(jobs) {
     }
 
     const todayPrefix = getTodayIsoPrefix();
+    const isUserLoggedIn = Boolean(authState.user || authState.token || localStorage.getItem('civil_auth_token'));
 
     elements.jobsGrid.innerHTML = jobs.map(job => {
         const isNewToday = job.first_seen_at && job.first_seen_at.startsWith(todayPrefix);
@@ -450,7 +453,7 @@ function renderJobs(jobs) {
                         <a href="${escapeHtml(job.job_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="padding: 5px 12px; font-size: 0.75rem;">
                             View Advert &rarr;
                         </a>
-                        ${authState.user ? `
+                        ${isUserLoggedIn ? `
                         <a href="/tailor/${escapeHtml(job.reference_number)}" class="btn btn-primary" style="padding: 5px 12px; font-size: 0.75rem; display:inline-flex; align-items:center; gap:4px;" title="AI Tailor CV, Personal Statement & Cover Letter">
                             <span>Tailor Application</span> ✨
                         </a>
@@ -1066,7 +1069,7 @@ function renderAuthUI() {
     }
     // Re-render job cards to reflect login state on Tailor buttons
     if (state.jobs && state.jobs.length > 0) {
-        renderJobCards();
+        renderJobs(state.jobs);
     }
 }
 
@@ -1532,7 +1535,7 @@ function handleMatchProfile() {
 }
 
 // Initial Boot
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     // Restore theme
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme === 'light') {
@@ -1542,7 +1545,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     setupEventListeners();
-    initAuth();
+    await initAuth();
     fetchStats();
     fetchFilterOptions();
     fetchJobs();
