@@ -163,58 +163,111 @@
 
                 <div class="filter-accordions">
                     <!-- 1. Location filters -->
-                    <details class="accordion-item" open>
+                    <details class="accordion-item" open id="accordionLocation">
                         <summary class="accordion-header">
-                            <span class="accordion-title">Location filters</span>
+                            <div class="accordion-header-main">
+                                <span class="accordion-title">Location filters</span>
+                                <div class="accordion-badges" id="badgesLocation"></div>
+                            </div>
                             <span class="accordion-sub" id="summaryLocation">Any location</span>
                             <span class="accordion-icon">&rsaquo;</span>
                         </summary>
                         <div class="accordion-body">
-                            <input type="text" id="filterLocationInput" class="form-control" placeholder="City, postcode or region (e.g. London, Glasgow)...">
-                            <div class="quick-loc-chips">
+                            <div class="facet-tabs" data-facet="location">
+                                <button type="button" class="facet-tab active-include" data-mode="include" data-facet="location">
+                                    <span>✓ Include</span>
+                                    <span class="facet-badge include-badge" id="badgeIncLocation">0</span>
+                                </button>
+                                <button type="button" class="facet-tab" data-mode="exclude" data-facet="location">
+                                    <span>⊘ Exclude</span>
+                                    <span class="facet-badge exclude-badge" id="badgeExcLocation">0</span>
+                                </button>
+                            </div>
+                            <div class="location-input-wrap">
+                                <input type="text" id="filterLocationInput" class="form-control" placeholder="Type city or region & press Enter...">
+                                <button type="button" id="addLocationBtn" class="btn btn-sm btn-outline" title="Add location">Add</button>
+                            </div>
+                            <div class="quick-loc-chips" id="quickLocChips">
                                 <span class="chip-sm" data-loc="London">London</span>
                                 <span class="chip-sm" data-loc="Manchester">Manchester</span>
                                 <span class="chip-sm" data-loc="Birmingham">Birmingham</span>
                                 <span class="chip-sm" data-loc="Bristol">Bristol</span>
                                 <span class="chip-sm" data-loc="Leeds">Leeds</span>
+                                <span class="chip-sm" data-loc="Glasgow">Glasgow</span>
+                                <span class="chip-sm" data-loc="Cardiff">Cardiff</span>
+                                <span class="chip-sm" data-loc="Belfast">Belfast</span>
+                                <span class="chip-sm" data-loc="Newcastle">Newcastle</span>
                                 <span class="chip-sm" data-loc="Scotland">Scotland</span>
                                 <span class="chip-sm" data-loc="Overseas">Overseas</span>
                             </div>
+                            <div class="selected-facet-chips" id="selectedLocChips"></div>
                         </div>
                     </details>
 
                     <!-- 2. Type of role -->
-                    <details class="accordion-item" open>
+                    <details class="accordion-item" open id="accordionRole">
                         <summary class="accordion-header">
-                            <span class="accordion-title">Type of role</span>
+                            <div class="accordion-header-main">
+                                <span class="accordion-title">Type of role</span>
+                                <div class="accordion-badges" id="badgesRole"></div>
+                            </div>
                             <span class="accordion-sub" id="summaryRole">No filters selected</span>
                             <span class="accordion-icon">&rsaquo;</span>
                         </summary>
                         <div class="accordion-body">
-                            <select id="filterRoleSelect" class="form-control">
-                                <option value="">All Types of Role</option>
-                            </select>
+                            <div class="facet-tabs" data-facet="role">
+                                <button type="button" class="facet-tab active-include" data-mode="include" data-facet="role">
+                                    <span>✓ Include</span>
+                                    <span class="facet-badge include-badge" id="badgeIncRole">0</span>
+                                </button>
+                                <button type="button" class="facet-tab" data-mode="exclude" data-facet="role">
+                                    <span>⊘ Exclude</span>
+                                    <span class="facet-badge exclude-badge" id="badgeExcRole">0</span>
+                                </button>
+                            </div>
+                            <div class="facet-toolbar">
+                                <input type="text" class="facet-search-box" data-target="roleChecklist" placeholder="Search role types...">
+                                <button type="button" class="facet-clear-btn" data-facet="role" title="Clear role selections">Clear</button>
+                            </div>
+                            <div class="facet-checklist" id="roleChecklist" data-facet="role"></div>
                         </div>
                     </details>
 
                     <!-- 3. Department -->
-                    <details class="accordion-item" open>
+                    <details class="accordion-item" open id="accordionDept">
                         <summary class="accordion-header">
-                            <span class="accordion-title">Department</span>
+                            <div class="accordion-header-main">
+                                <span class="accordion-title">Department</span>
+                                <div class="accordion-badges" id="badgesDept"></div>
+                            </div>
                             <span class="accordion-sub" id="summaryDept">No filters selected</span>
                             <span class="accordion-icon">&rsaquo;</span>
                         </summary>
                         <div class="accordion-body">
-                            <select id="filterDeptSelect" class="form-control">
-                                <option value="">All Departments</option>
-                            </select>
+                            <div class="facet-tabs" data-facet="dept">
+                                <button type="button" class="facet-tab active-include" data-mode="include" data-facet="dept">
+                                    <span>✓ Include</span>
+                                    <span class="facet-badge include-badge" id="badgeIncDept">0</span>
+                                </button>
+                                <button type="button" class="facet-tab" data-mode="exclude" data-facet="dept">
+                                    <span>⊘ Exclude</span>
+                                    <span class="facet-badge exclude-badge" id="badgeExcDept">0</span>
+                                </button>
+                            </div>
+                            <div class="facet-toolbar">
+                                <input type="text" class="facet-search-box" data-target="deptChecklist" placeholder="Search departments...">
+                                <button type="button" class="facet-clear-btn" data-facet="dept" title="Clear department selections">Clear</button>
+                            </div>
+                            <div class="facet-checklist" id="deptChecklist" data-facet="dept"></div>
                         </div>
                     </details>
 
                     <!-- 4. Salary / Salary scale -->
                     <details class="accordion-item" open>
                         <summary class="accordion-header">
-                            <span class="accordion-title">Salary</span>
+                            <div class="accordion-header-main">
+                                <span class="accordion-title">Salary scale</span>
+                            </div>
                             <span class="accordion-sub" id="summarySalary">no minimum, no maximum</span>
                             <span class="accordion-icon">&rsaquo;</span>
                         </summary>
@@ -272,76 +325,98 @@
                     </details>
 
                     <!-- 5. Job grade -->
-                    <details class="accordion-item" open>
+                    <details class="accordion-item" open id="accordionGrade">
                         <summary class="accordion-header">
-                            <span class="accordion-title">Job grade</span>
+                            <div class="accordion-header-main">
+                                <span class="accordion-title">Job grade</span>
+                                <div class="accordion-badges" id="badgesGrade"></div>
+                            </div>
                             <span class="accordion-sub" id="summaryGrade">No filters selected</span>
                             <span class="accordion-icon">&rsaquo;</span>
                         </summary>
                         <div class="accordion-body">
-                            <select id="filterGradeSelect" class="form-control">
-                                <option value="">All Job Grades</option>
-                                <option value="Administrative Assistant">Administrative Assistant (AA)</option>
-                                <option value="Administrative Officer">Administrative Officer (AO)</option>
-                                <option value="Executive Officer">Executive Officer (EO)</option>
-                                <option value="Higher Executive Officer">Higher Executive Officer (HEO)</option>
-                                <option value="Senior Executive Officer">Senior Executive Officer (SEO)</option>
-                                <option value="Grade 7">Grade 7</option>
-                                <option value="Grade 6">Grade 6</option>
-                                <option value="SCS Pay Band 1">SCS Pay Band 1</option>
-                                <option value="SCS Pay Band 2">SCS Pay Band 2</option>
-                                <option value="SCS Pay Band 3">SCS Pay Band 3</option>
-                                <option value="Other">Other</option>
-                            </select>
+                            <div class="facet-tabs" data-facet="grade">
+                                <button type="button" class="facet-tab active-include" data-mode="include" data-facet="grade">
+                                    <span>✓ Include</span>
+                                    <span class="facet-badge include-badge" id="badgeIncGrade">0</span>
+                                </button>
+                                <button type="button" class="facet-tab" data-mode="exclude" data-facet="grade">
+                                    <span>⊘ Exclude</span>
+                                    <span class="facet-badge exclude-badge" id="badgeExcGrade">0</span>
+                                </button>
+                            </div>
+                            <div class="facet-toolbar">
+                                <input type="text" class="facet-search-box" data-target="gradeChecklist" placeholder="Search job grades...">
+                                <button type="button" class="facet-clear-btn" data-facet="grade" title="Clear grade selections">Clear</button>
+                            </div>
+                            <div class="facet-checklist" id="gradeChecklist" data-facet="grade"></div>
                         </div>
                     </details>
 
                     <!-- 6. Working pattern -->
-                    <details class="accordion-item" open>
+                    <details class="accordion-item" open id="accordionPattern">
                         <summary class="accordion-header">
-                            <span class="accordion-title">Working pattern</span>
+                            <div class="accordion-header-main">
+                                <span class="accordion-title">Working pattern</span>
+                                <div class="accordion-badges" id="badgesPattern"></div>
+                            </div>
                             <span class="accordion-sub" id="summaryPattern">No filters selected</span>
                             <span class="accordion-icon">&rsaquo;</span>
                         </summary>
                         <div class="accordion-body">
-                            <select id="filterPatternSelect" class="form-control">
-                                <option value="">All Working Patterns</option>
-                                <option value="Full-time">Full-time</option>
-                                <option value="Part-time">Part-time</option>
-                                <option value="Flexible working">Flexible working</option>
-                                <option value="Job share">Job share</option>
-                                <option value="Compressed hours">Compressed hours</option>
-                                <option value="Homeworking">Homeworking</option>
-                                <option value="Shift working">Shift working</option>
-                            </select>
+                            <div class="facet-tabs" data-facet="pattern">
+                                <button type="button" class="facet-tab active-include" data-mode="include" data-facet="pattern">
+                                    <span>✓ Include</span>
+                                    <span class="facet-badge include-badge" id="badgeIncPattern">0</span>
+                                </button>
+                                <button type="button" class="facet-tab" data-mode="exclude" data-facet="pattern">
+                                    <span>⊘ Exclude</span>
+                                    <span class="facet-badge exclude-badge" id="badgeExcPattern">0</span>
+                                </button>
+                            </div>
+                            <div class="facet-toolbar">
+                                <input type="text" class="facet-search-box" data-target="patternChecklist" placeholder="Search patterns...">
+                                <button type="button" class="facet-clear-btn" data-facet="pattern" title="Clear pattern selections">Clear</button>
+                            </div>
+                            <div class="facet-checklist" id="patternChecklist" data-facet="pattern"></div>
                         </div>
                     </details>
 
                     <!-- 7. Contract type -->
-                    <details class="accordion-item" open>
+                    <details class="accordion-item" open id="accordionContract">
                         <summary class="accordion-header">
-                            <span class="accordion-title">Contract type</span>
+                            <div class="accordion-header-main">
+                                <span class="accordion-title">Contract type</span>
+                                <div class="accordion-badges" id="badgesContract"></div>
+                            </div>
                             <span class="accordion-sub" id="summaryContract">No filters selected</span>
                             <span class="accordion-icon">&rsaquo;</span>
                         </summary>
                         <div class="accordion-body">
-                            <select id="filterContractSelect" class="form-control">
-                                <option value="">All Contract Types</option>
-                                <option value="Permanent">Permanent</option>
-                                <option value="Fixed term">Fixed term</option>
-                                <option value="Temporary">Temporary</option>
-                                <option value="Loan">Loan</option>
-                                <option value="Secondment">Secondment</option>
-                                <option value="Apprenticeship">Apprenticeship</option>
-                                <option value="Internship">Internship</option>
-                            </select>
+                            <div class="facet-tabs" data-facet="contract">
+                                <button type="button" class="facet-tab active-include" data-mode="include" data-facet="contract">
+                                    <span>✓ Include</span>
+                                    <span class="facet-badge include-badge" id="badgeIncContract">0</span>
+                                </button>
+                                <button type="button" class="facet-tab" data-mode="exclude" data-facet="contract">
+                                    <span>⊘ Exclude</span>
+                                    <span class="facet-badge exclude-badge" id="badgeExcContract">0</span>
+                                </button>
+                            </div>
+                            <div class="facet-toolbar">
+                                <input type="text" class="facet-search-box" data-target="contractChecklist" placeholder="Search contract types...">
+                                <button type="button" class="facet-clear-btn" data-facet="contract" title="Clear contract selections">Clear</button>
+                            </div>
+                            <div class="facet-checklist" id="contractChecklist" data-facet="contract"></div>
                         </div>
                     </details>
 
                     <!-- 8. Number of jobs / vacancies -->
                     <details class="accordion-item" open>
                         <summary class="accordion-header">
-                            <span class="accordion-title">Number of jobs</span>
+                            <div class="accordion-header-main">
+                                <span class="accordion-title">Number of jobs</span>
+                            </div>
                             <span class="accordion-sub" id="summaryNumJobs">No filters selected</span>
                             <span class="accordion-icon">&rsaquo;</span>
                         </summary>

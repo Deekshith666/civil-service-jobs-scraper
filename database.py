@@ -9,7 +9,7 @@ import hashlib
 import secrets
 from pathlib import Path
 from datetime import datetime, date, timedelta
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from config import (
     JOBS_DB_PATH,
     USERS_DB_PATH,
@@ -754,16 +754,211 @@ def get_today_new_jobs(limit: Optional[int] = None) -> List[Dict]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_jobs(
+def _normalize_filter_list(val: Any) -> List[str]:
+    """Normalize input (list, set, tuple, or single string) into a list of non-empty strings without splitting valid names containing commas."""
+    if val is None:
+        return []
+    if isinstance(val, (list, set, tuple)):
+        result = []
+        for item in val:
+            if item is None:
+                continue
+            s = str(item).strip()
+            if s and s not in result:
+                result.append(s)
+        return result
+    if isinstance(val, str):
+        s = val.strip()
+        return [s] if s else []
+    return [str(val).strip()]
+
+
+def _build_jobs_where_clause(
     search: str = "",
-    department: str = "",
-    location: str = "",
+    department: Union[str, List[str]] = "",
+    departments: Optional[List[str]] = None,
+    exclude_departments: Optional[List[str]] = None,
+    location: Union[str, List[str]] = "",
+    locations: Optional[List[str]] = None,
+    exclude_locations: Optional[List[str]] = None,
     min_salary: Optional[int] = None,
     max_salary: Optional[int] = None,
-    job_grade: str = "",
-    role_type: str = "",
-    working_pattern: str = "",
-    contract_type: str = "",
+    job_grade: Union[str, List[str]] = "",
+    job_grades: Optional[List[str]] = None,
+    exclude_job_grades: Optional[List[str]] = None,
+    role_type: Union[str, List[str]] = "",
+    role_types: Optional[List[str]] = None,
+    exclude_role_types: Optional[List[str]] = None,
+    working_pattern: Union[str, List[str]] = "",
+    working_patterns: Optional[List[str]] = None,
+    exclude_working_patterns: Optional[List[str]] = None,
+    contract_type: Union[str, List[str]] = "",
+    contract_types: Optional[List[str]] = None,
+    exclude_contract_types: Optional[List[str]] = None,
+    number_of_jobs: str = "",
+    only_new_today: bool = False
+) -> Tuple[str, List[Any]]:
+    """Construct SQL WHERE clause and parameter list supporting multi-selection and exclusions."""
+    where_clauses: List[str] = []
+    params: List[Any] = []
+
+    # Free text search
+    if search and search.strip():
+        where_clauses.append("(title LIKE ? OR department LIKE ? OR location LIKE ? OR reference_number LIKE ?)")
+        s_pattern = f"%{search.strip()}%"
+        params.extend([s_pattern, s_pattern, s_pattern, s_pattern])
+
+    # Department inclusion
+    inc_depts = _normalize_filter_list(departments) + _normalize_filter_list(department)
+    inc_depts = list(dict.fromkeys(inc_depts))
+    if inc_depts:
+        placeholders = ", ".join(["?"] * len(inc_depts))
+        where_clauses.append(f"department IN ({placeholders})")
+        params.extend(inc_depts)
+
+    # Department exclusion
+    exc_depts = list(dict.fromkeys(_normalize_filter_list(exclude_departments)))
+    if exc_depts:
+        placeholders = ", ".join(["?"] * len(exc_depts))
+        where_clauses.append(f"(department NOT IN ({placeholders}) OR department IS NULL)")
+        params.extend(exc_depts)
+
+    # Location inclusion
+    inc_locs = _normalize_filter_list(locations) + _normalize_filter_list(location)
+    inc_locs = list(dict.fromkeys(inc_locs))
+    if inc_locs:
+        or_clauses = ["location LIKE ?" for _ in inc_locs]
+        where_clauses.append(f"({' OR '.join(or_clauses)})")
+        params.extend([f"%{loc}%" for loc in inc_locs])
+
+    # Location exclusion
+    exc_locs = list(dict.fromkeys(_normalize_filter_list(exclude_locations)))
+    if exc_locs:
+        for loc in exc_locs:
+            where_clauses.append("(location NOT LIKE ? OR location IS NULL)")
+            params.append(f"%{loc}%")
+
+    # Role types inclusion
+    inc_roles = _normalize_filter_list(role_types) + _normalize_filter_list(role_type)
+    inc_roles = list(dict.fromkeys(inc_roles))
+    if inc_roles:
+        or_clauses = ["role_type LIKE ?" for _ in inc_roles]
+        where_clauses.append(f"({' OR '.join(or_clauses)})")
+        params.extend([f"%{r}%" for r in inc_roles])
+
+    # Role types exclusion
+    exc_roles = list(dict.fromkeys(_normalize_filter_list(exclude_role_types)))
+    if exc_roles:
+        for r in exc_roles:
+            where_clauses.append("(role_type NOT LIKE ? OR role_type IS NULL)")
+            params.append(f"%{r}%")
+
+    # Job grade inclusion
+    inc_grades = _normalize_filter_list(job_grades) + _normalize_filter_list(job_grade)
+    inc_grades = list(dict.fromkeys(inc_grades))
+    if inc_grades:
+        or_clauses = ["job_grade LIKE ?" for _ in inc_grades]
+        where_clauses.append(f"({' OR '.join(or_clauses)})")
+        params.extend([f"%{g}%" for g in inc_grades])
+
+    # Job grade exclusion
+    exc_grades = list(dict.fromkeys(_normalize_filter_list(exclude_job_grades)))
+    if exc_grades:
+        for g in exc_grades:
+            where_clauses.append("(job_grade NOT LIKE ? OR job_grade IS NULL)")
+            params.append(f"%{g}%")
+
+    # Working pattern inclusion
+    inc_patterns = _normalize_filter_list(working_patterns) + _normalize_filter_list(working_pattern)
+    inc_patterns = list(dict.fromkeys(inc_patterns))
+    if inc_patterns:
+        or_clauses = ["working_pattern LIKE ?" for _ in inc_patterns]
+        where_clauses.append(f"({' OR '.join(or_clauses)})")
+        params.extend([f"%{p}%" for p in inc_patterns])
+
+    # Working pattern exclusion
+    exc_patterns = list(dict.fromkeys(_normalize_filter_list(exclude_working_patterns)))
+    if exc_patterns:
+        for p in exc_patterns:
+            where_clauses.append("(working_pattern NOT LIKE ? OR working_pattern IS NULL)")
+            params.append(f"%{p}%")
+
+    # Contract type inclusion
+    inc_contracts = _normalize_filter_list(contract_types) + _normalize_filter_list(contract_type)
+    inc_contracts = list(dict.fromkeys(inc_contracts))
+    if inc_contracts:
+        or_clauses = ["contract_type LIKE ?" for _ in inc_contracts]
+        where_clauses.append(f"({' OR '.join(or_clauses)})")
+        params.extend([f"%{c}%" for c in inc_contracts])
+
+    # Contract type exclusion
+    exc_contracts = list(dict.fromkeys(_normalize_filter_list(exclude_contract_types)))
+    if exc_contracts:
+        for c in exc_contracts:
+            where_clauses.append("(contract_type NOT LIKE ? OR contract_type IS NULL)")
+            params.append(f"%{c}%")
+
+    # Salary thresholds
+    if min_salary is not None and min_salary > 0:
+        where_clauses.append("(salary_max >= ? OR (salary_max IS NULL AND salary_min >= ?))")
+        params.extend([min_salary, min_salary])
+
+    if max_salary is not None and max_salary > 0:
+        where_clauses.append("(salary_min <= ? OR (salary_min IS NULL AND salary_max <= ?))")
+        params.extend([max_salary, max_salary])
+
+    # Number of posts filter
+    if number_of_jobs:
+        if number_of_jobs == "1":
+            where_clauses.append("(number_of_jobs = 1 OR number_of_jobs IS NULL)")
+        elif number_of_jobs in ("2+", "2"):
+            where_clauses.append("number_of_jobs >= 2")
+        elif number_of_jobs in ("3+", "3"):
+            where_clauses.append("number_of_jobs >= 3")
+        elif number_of_jobs in ("5+", "5"):
+            where_clauses.append("number_of_jobs >= 5")
+        elif number_of_jobs in ("10+", "10"):
+            where_clauses.append("number_of_jobs >= 10")
+        else:
+            try:
+                n = int(number_of_jobs.rstrip("+"))
+                where_clauses.append("number_of_jobs >= ?")
+                params.append(n)
+            except ValueError:
+                pass
+
+    # Only new today filter
+    if only_new_today:
+        today_prefix = date.today().isoformat() + "%"
+        where_clauses.append("first_seen_at LIKE ?")
+        params.append(today_prefix)
+
+    sql_where = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else " WHERE 1=1"
+    return sql_where, params
+
+
+def get_jobs(
+    search: str = "",
+    department: Union[str, List[str]] = "",
+    departments: Optional[List[str]] = None,
+    exclude_departments: Optional[List[str]] = None,
+    location: Union[str, List[str]] = "",
+    locations: Optional[List[str]] = None,
+    exclude_locations: Optional[List[str]] = None,
+    min_salary: Optional[int] = None,
+    max_salary: Optional[int] = None,
+    job_grade: Union[str, List[str]] = "",
+    job_grades: Optional[List[str]] = None,
+    exclude_job_grades: Optional[List[str]] = None,
+    role_type: Union[str, List[str]] = "",
+    role_types: Optional[List[str]] = None,
+    exclude_role_types: Optional[List[str]] = None,
+    working_pattern: Union[str, List[str]] = "",
+    working_patterns: Optional[List[str]] = None,
+    exclude_working_patterns: Optional[List[str]] = None,
+    contract_type: Union[str, List[str]] = "",
+    contract_types: Optional[List[str]] = None,
+    exclude_contract_types: Optional[List[str]] = None,
     number_of_jobs: str = "",
     only_new_today: bool = False,
     limit: int = 50,
@@ -771,74 +966,33 @@ def get_jobs(
     sort_by: str = "first_seen_at",
     sort_order: str = "desc"
 ) -> List[Dict]:
-    """Retrieve jobs with full multi-facet filtering, salary range, sorting, and pagination."""
-    query = "SELECT * FROM jobs WHERE 1=1"
-    params: List = []
+    """Retrieve jobs with full multi-facet filtering, salary range, exclusions, sorting, and pagination."""
+    where_sql, params = _build_jobs_where_clause(
+        search=search,
+        department=department,
+        departments=departments,
+        exclude_departments=exclude_departments,
+        location=location,
+        locations=locations,
+        exclude_locations=exclude_locations,
+        min_salary=min_salary,
+        max_salary=max_salary,
+        job_grade=job_grade,
+        job_grades=job_grades,
+        exclude_job_grades=exclude_job_grades,
+        role_type=role_type,
+        role_types=role_types,
+        exclude_role_types=exclude_role_types,
+        working_pattern=working_pattern,
+        working_patterns=working_patterns,
+        exclude_working_patterns=exclude_working_patterns,
+        contract_type=contract_type,
+        contract_types=contract_types,
+        exclude_contract_types=exclude_contract_types,
+        number_of_jobs=number_of_jobs,
+        only_new_today=only_new_today
+    )
 
-    if search:
-        query += " AND (title LIKE ? OR department LIKE ? OR location LIKE ? OR reference_number LIKE ?)"
-        s_pattern = f"%{search}%"
-        params.extend([s_pattern, s_pattern, s_pattern, s_pattern])
-
-    if department:
-        query += " AND department = ?"
-        params.append(department)
-
-    if location:
-        query += " AND location LIKE ?"
-        params.append(f"%{location}%")
-
-    if min_salary is not None and min_salary > 0:
-        # Matches jobs where maximum salary >= user minimum (or min salary >= user minimum)
-        query += " AND (salary_max >= ? OR (salary_max IS NULL AND salary_min >= ?))"
-        params.extend([min_salary, min_salary])
-
-    if max_salary is not None and max_salary > 0:
-        # Matches jobs where minimum salary <= user maximum (or max salary <= user maximum)
-        query += " AND (salary_min <= ? OR (salary_min IS NULL AND salary_max <= ?))"
-        params.extend([max_salary, max_salary])
-
-    if job_grade:
-        query += " AND job_grade LIKE ?"
-        params.append(f"%{job_grade}%")
-
-    if role_type:
-        query += " AND role_type LIKE ?"
-        params.append(f"%{role_type}%")
-
-    if working_pattern:
-        query += " AND working_pattern LIKE ?"
-        params.append(f"%{working_pattern}%")
-
-    if contract_type:
-        query += " AND contract_type LIKE ?"
-        params.append(f"%{contract_type}%")
-
-    if number_of_jobs:
-        if number_of_jobs == "1":
-            query += " AND (number_of_jobs = 1 OR number_of_jobs IS NULL)"
-        elif number_of_jobs in ("2+", "2"):
-            query += " AND number_of_jobs >= 2"
-        elif number_of_jobs in ("3+", "3"):
-            query += " AND number_of_jobs >= 3"
-        elif number_of_jobs in ("5+", "5"):
-            query += " AND number_of_jobs >= 5"
-        elif number_of_jobs in ("10+", "10"):
-            query += " AND number_of_jobs >= 10"
-        else:
-            try:
-                n = int(number_of_jobs.rstrip("+"))
-                query += " AND number_of_jobs >= ?"
-                params.append(n)
-            except ValueError:
-                pass
-
-    if only_new_today:
-        today_prefix = date.today().isoformat() + "%"
-        query += " AND first_seen_at LIKE ?"
-        params.append(today_prefix)
-
-    # Sort validation
     allowed_sorts = {
         "first_seen_at": "first_seen_at",
         "closing_date": "closing_date",
@@ -850,7 +1004,7 @@ def get_jobs(
     safe_sort = allowed_sorts.get(sort_by, "first_seen_at")
     safe_order = "ASC" if sort_order.lower() == "asc" else "DESC"
 
-    query += f" ORDER BY {safe_sort} {safe_order} LIMIT ? OFFSET ?"
+    query = f"SELECT * FROM jobs {where_sql} ORDER BY {safe_sort} {safe_order} LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
     with get_db_connection() as conn:
@@ -865,81 +1019,57 @@ def get_jobs(
 
 def count_jobs(
     search: str = "",
-    department: str = "",
-    location: str = "",
+    department: Union[str, List[str]] = "",
+    departments: Optional[List[str]] = None,
+    exclude_departments: Optional[List[str]] = None,
+    location: Union[str, List[str]] = "",
+    locations: Optional[List[str]] = None,
+    exclude_locations: Optional[List[str]] = None,
     min_salary: Optional[int] = None,
     max_salary: Optional[int] = None,
-    job_grade: str = "",
-    role_type: str = "",
-    working_pattern: str = "",
-    contract_type: str = "",
+    job_grade: Union[str, List[str]] = "",
+    job_grades: Optional[List[str]] = None,
+    exclude_job_grades: Optional[List[str]] = None,
+    role_type: Union[str, List[str]] = "",
+    role_types: Optional[List[str]] = None,
+    exclude_role_types: Optional[List[str]] = None,
+    working_pattern: Union[str, List[str]] = "",
+    working_patterns: Optional[List[str]] = None,
+    exclude_working_patterns: Optional[List[str]] = None,
+    contract_type: Union[str, List[str]] = "",
+    contract_types: Optional[List[str]] = None,
+    exclude_contract_types: Optional[List[str]] = None,
     number_of_jobs: str = "",
     only_new_today: bool = False
 ) -> int:
-    """Count total jobs matching all current filter conditions."""
-    query = "SELECT COUNT(*) FROM jobs WHERE 1=1"
-    params: List = []
+    """Count total jobs matching all current filter conditions including multi-selections and exclusions."""
+    where_sql, params = _build_jobs_where_clause(
+        search=search,
+        department=department,
+        departments=departments,
+        exclude_departments=exclude_departments,
+        location=location,
+        locations=locations,
+        exclude_locations=exclude_locations,
+        min_salary=min_salary,
+        max_salary=max_salary,
+        job_grade=job_grade,
+        job_grades=job_grades,
+        exclude_job_grades=exclude_job_grades,
+        role_type=role_type,
+        role_types=role_types,
+        exclude_role_types=exclude_role_types,
+        working_pattern=working_pattern,
+        working_patterns=working_patterns,
+        exclude_working_patterns=exclude_working_patterns,
+        contract_type=contract_type,
+        contract_types=contract_types,
+        exclude_contract_types=exclude_contract_types,
+        number_of_jobs=number_of_jobs,
+        only_new_today=only_new_today
+    )
 
-    if search:
-        query += " AND (title LIKE ? OR department LIKE ? OR location LIKE ? OR reference_number LIKE ?)"
-        s_pattern = f"%{search}%"
-        params.extend([s_pattern, s_pattern, s_pattern, s_pattern])
-
-    if department:
-        query += " AND department = ?"
-        params.append(department)
-
-    if location:
-        query += " AND location LIKE ?"
-        params.append(f"%{location}%")
-
-    if min_salary is not None and min_salary > 0:
-        query += " AND (salary_max >= ? OR (salary_max IS NULL AND salary_min >= ?))"
-        params.extend([min_salary, min_salary])
-
-    if max_salary is not None and max_salary > 0:
-        query += " AND (salary_min <= ? OR (salary_min IS NULL AND salary_max <= ?))"
-        params.extend([max_salary, max_salary])
-
-    if job_grade:
-        query += " AND job_grade LIKE ?"
-        params.append(f"%{job_grade}%")
-
-    if role_type:
-        query += " AND role_type LIKE ?"
-        params.append(f"%{role_type}%")
-
-    if working_pattern:
-        query += " AND working_pattern LIKE ?"
-        params.append(f"%{working_pattern}%")
-
-    if contract_type:
-        query += " AND contract_type LIKE ?"
-        params.append(f"%{contract_type}%")
-
-    if number_of_jobs:
-        if number_of_jobs == "1":
-            query += " AND (number_of_jobs = 1 OR number_of_jobs IS NULL)"
-        elif number_of_jobs in ("2+", "2"):
-            query += " AND number_of_jobs >= 2"
-        elif number_of_jobs in ("3+", "3"):
-            query += " AND number_of_jobs >= 3"
-        elif number_of_jobs in ("5+", "5"):
-            query += " AND number_of_jobs >= 5"
-        elif number_of_jobs in ("10+", "10"):
-            query += " AND number_of_jobs >= 10"
-        else:
-            try:
-                n = int(number_of_jobs.rstrip("+"))
-                query += " AND number_of_jobs >= ?"
-                params.append(n)
-            except ValueError:
-                pass
-
-    if only_new_today:
-        today_prefix = date.today().isoformat() + "%"
-        query += " AND first_seen_at LIKE ?"
-        params.append(today_prefix)
+    query = f"SELECT COUNT(*) FROM jobs {where_sql}"
 
     with get_db_connection() as conn:
         tbl = get_jobs_table_target(conn)

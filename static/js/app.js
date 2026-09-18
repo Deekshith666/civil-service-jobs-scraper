@@ -9,19 +9,46 @@ const state = {
     limit: 24,
     total: 0,
     search: '',
-    department: '',
-    location: '',
     minSalary: '',
     maxSalary: '',
-    jobGrade: '',
-    roleType: '',
-    workingPattern: '',
-    contractType: '',
+    numJobs: '',
     onlyNewToday: false,
     sortBy: 'first_seen_at',
     sortOrder: 'desc',
     jobs: [],
-    numJobs: '',
+
+    // Multi-select inclusion and exclusion Sets
+    departments: new Set(),
+    excludeDepartments: new Set(),
+    roleTypes: new Set(),
+    excludeRoleTypes: new Set(),
+    locations: new Set(),
+    excludeLocations: new Set(),
+    jobGrades: new Set(),
+    excludeJobGrades: new Set(),
+    workingPatterns: new Set(),
+    excludeWorkingPatterns: new Set(),
+    contractTypes: new Set(),
+    excludeContractTypes: new Set(),
+
+    // Current tab mode per facet: 'include' or 'exclude'
+    facetModes: {
+        location: 'include',
+        role: 'include',
+        dept: 'include',
+        grade: 'include',
+        pattern: 'include',
+        contract: 'include'
+    },
+
+    // Legacy string compatibility
+    department: '',
+    location: '',
+    jobGrade: '',
+    roleType: '',
+    workingPattern: '',
+    contractType: '',
+
     isScraping: false,
     isEnriching: false,
     pollInterval: null,
@@ -48,15 +75,20 @@ const elements = {
     cardNewToday: document.getElementById('cardNewToday'),
     statNewTodaySub: document.getElementById('statNewTodaySub'),
     
-    // Sidebar Filter Accordions
+    // Sidebar Filter Accordions & Facets
     filterLocationInput: document.getElementById('filterLocationInput'),
-    filterRoleSelect: document.getElementById('filterRoleSelect'),
-    filterDeptSelect: document.getElementById('filterDeptSelect'),
+    addLocationBtn: document.getElementById('addLocationBtn'),
+    quickLocChips: document.getElementById('quickLocChips'),
+    selectedLocChips: document.getElementById('selectedLocChips'),
+
+    roleChecklist: document.getElementById('roleChecklist'),
+    deptChecklist: document.getElementById('deptChecklist'),
+    gradeChecklist: document.getElementById('gradeChecklist'),
+    patternChecklist: document.getElementById('patternChecklist'),
+    contractChecklist: document.getElementById('contractChecklist'),
+
     filterSalaryMin: document.getElementById('filterSalaryMin'),
     filterSalaryMax: document.getElementById('filterSalaryMax'),
-    filterGradeSelect: document.getElementById('filterGradeSelect'),
-    filterPatternSelect: document.getElementById('filterPatternSelect'),
-    filterContractSelect: document.getElementById('filterContractSelect'),
     filterNumJobsSelect: document.getElementById('filterNumJobsSelect'),
     
     summaryLocation: document.getElementById('summaryLocation'),
@@ -67,6 +99,13 @@ const elements = {
     summaryPattern: document.getElementById('summaryPattern'),
     summaryContract: document.getElementById('summaryContract'),
     summaryNumJobs: document.getElementById('summaryNumJobs'),
+
+    badgesLocation: document.getElementById('badgesLocation'),
+    badgesRole: document.getElementById('badgesRole'),
+    badgesDept: document.getElementById('badgesDept'),
+    badgesGrade: document.getElementById('badgesGrade'),
+    badgesPattern: document.getElementById('badgesPattern'),
+    badgesContract: document.getElementById('badgesContract'),
     
     updateResultsBtn: document.getElementById('updateResultsBtn'),
     resetAllFiltersBtn: document.getElementById('resetAllFiltersBtn'),
@@ -256,55 +295,322 @@ async function fetchStats() {
     }
 }
 
+const FACET_CONFIG = {
+    dept: {
+        incSet: 'departments',
+        excSet: 'excludeDepartments',
+        checklistId: 'deptChecklist',
+        badgeIncId: 'badgeIncDept',
+        badgeExcId: 'badgeExcDept',
+        summaryId: 'summaryDept',
+        headerBadgesId: 'badgesDept',
+        title: 'Department'
+    },
+    role: {
+        incSet: 'roleTypes',
+        excSet: 'excludeRoleTypes',
+        checklistId: 'roleChecklist',
+        badgeIncId: 'badgeIncRole',
+        badgeExcId: 'badgeExcRole',
+        summaryId: 'summaryRole',
+        headerBadgesId: 'badgesRole',
+        title: 'Role'
+    },
+    grade: {
+        incSet: 'jobGrades',
+        excSet: 'excludeJobGrades',
+        checklistId: 'gradeChecklist',
+        badgeIncId: 'badgeIncGrade',
+        badgeExcId: 'badgeExcGrade',
+        summaryId: 'summaryGrade',
+        headerBadgesId: 'badgesGrade',
+        title: 'Grade'
+    },
+    pattern: {
+        incSet: 'workingPatterns',
+        excSet: 'excludeWorkingPatterns',
+        checklistId: 'patternChecklist',
+        badgeIncId: 'badgeIncPattern',
+        badgeExcId: 'badgeExcPattern',
+        summaryId: 'summaryPattern',
+        headerBadgesId: 'badgesPattern',
+        title: 'Pattern'
+    },
+    contract: {
+        incSet: 'contractTypes',
+        excSet: 'excludeContractTypes',
+        checklistId: 'contractChecklist',
+        badgeIncId: 'badgeIncContract',
+        badgeExcId: 'badgeExcContract',
+        summaryId: 'summaryContract',
+        headerBadgesId: 'badgesContract',
+        title: 'Contract'
+    },
+    location: {
+        incSet: 'locations',
+        excSet: 'excludeLocations',
+        badgeIncId: 'badgeIncLocation',
+        badgeExcId: 'badgeExcLocation',
+        summaryId: 'summaryLocation',
+        headerBadgesId: 'badgesLocation',
+        title: 'Location'
+    }
+};
+
+let cachedFilterData = null;
+
+function renderFacetChecklist(facetKey, items) {
+    const cfg = FACET_CONFIG[facetKey];
+    if (!cfg || !cfg.checklistId) return;
+    const container = document.getElementById(cfg.checklistId);
+    if (!container) return;
+
+    const currentMode = state.facetModes[facetKey] || 'include';
+    container.classList.toggle('exclude-mode', currentMode === 'exclude');
+    container.innerHTML = '';
+
+    if (!items || items.length === 0) {
+        container.innerHTML = '<div style="padding: 8px; color: var(--text-muted); font-size: 0.75rem;">No options found</div>';
+        return;
+    }
+
+    const frag = document.createDocumentFragment();
+    items.forEach(item => {
+        if (!item) return;
+        const isInc = state[cfg.incSet].has(item);
+        const isExc = state[cfg.excSet].has(item);
+        const isChecked = currentMode === 'include' ? isInc : isExc;
+
+        const label = document.createElement('label');
+        label.className = 'facet-item' + (isInc ? ' is-included' : '') + (isExc ? ' is-excluded' : '');
+        label.dataset.val = item;
+
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.value = item;
+        chk.checked = isChecked;
+        chk.addEventListener('change', (e) => {
+            handleFacetCheckboxChange(facetKey, item, e.target.checked);
+        });
+
+        const span = document.createElement('span');
+        span.className = 'facet-text';
+        span.textContent = item;
+
+        label.appendChild(chk);
+        label.appendChild(span);
+        frag.appendChild(label);
+    });
+
+    container.appendChild(frag);
+    syncFacetBadges(facetKey);
+}
+
+function handleFacetCheckboxChange(facetKey, val, isChecked) {
+    const cfg = FACET_CONFIG[facetKey];
+    if (!cfg) return;
+    const mode = state.facetModes[facetKey] || 'include';
+
+    if (mode === 'include') {
+        if (isChecked) {
+            state[cfg.incSet].add(val);
+            state[cfg.excSet].delete(val);
+        } else {
+            state[cfg.incSet].delete(val);
+        }
+    } else {
+        if (isChecked) {
+            state[cfg.excSet].add(val);
+            state[cfg.incSet].delete(val);
+        } else {
+            state[cfg.excSet].delete(val);
+        }
+    }
+
+    syncFacetUI(facetKey);
+    state.page = 1;
+    fetchJobs();
+}
+
+function syncFacetUI(facetKey) {
+    const cfg = FACET_CONFIG[facetKey];
+    if (!cfg) return;
+    const mode = state.facetModes[facetKey] || 'include';
+
+    if (cfg.checklistId) {
+        const container = document.getElementById(cfg.checklistId);
+        if (container) {
+            container.classList.toggle('exclude-mode', mode === 'exclude');
+            container.querySelectorAll('.facet-item').forEach(label => {
+                const val = label.dataset.val;
+                const isInc = state[cfg.incSet].has(val);
+                const isExc = state[cfg.excSet].has(val);
+                label.classList.toggle('is-included', isInc);
+                label.classList.toggle('is-excluded', isExc);
+                const chk = label.querySelector('input[type="checkbox"]');
+                if (chk) {
+                    chk.checked = mode === 'include' ? isInc : isExc;
+                }
+            });
+        }
+    }
+
+    if (facetKey === 'location') {
+        syncLocationUI();
+    }
+
+    syncFacetBadges(facetKey);
+}
+
+function syncLocationUI() {
+    // Quick chips update
+    document.querySelectorAll('#quickLocChips .chip-sm').forEach(chip => {
+        const loc = chip.dataset.loc;
+        chip.classList.remove('active', 'chip-include', 'chip-exclude');
+        if (state.locations.has(loc)) {
+            chip.classList.add('chip-include');
+        } else if (state.excludeLocations.has(loc)) {
+            chip.classList.add('chip-exclude');
+        }
+    });
+
+    // Custom selected chips update
+    if (elements.selectedLocChips) {
+        elements.selectedLocChips.innerHTML = '';
+        const allLocs = [
+            ...Array.from(state.locations).map(l => ({ val: l, type: 'include' })),
+            ...Array.from(state.excludeLocations).map(l => ({ val: l, type: 'exclude' }))
+        ];
+        allLocs.forEach(item => {
+            const span = document.createElement('span');
+            span.className = `selected-chip chip-${item.type}`;
+            span.innerHTML = `<span>${item.type === 'include' ? '✓' : '⊘'} ${escapeHtml(item.val)}</span><span class="chip-remove">&times;</span>`;
+            span.addEventListener('click', () => {
+                if (item.type === 'include') {
+                    state.locations.delete(item.val);
+                } else {
+                    state.excludeLocations.delete(item.val);
+                }
+                syncFacetUI('location');
+                state.page = 1;
+                fetchJobs();
+            });
+            elements.selectedLocChips.appendChild(span);
+        });
+    }
+}
+
+function syncFacetBadges(facetKey) {
+    const cfg = FACET_CONFIG[facetKey];
+    if (!cfg) return;
+    const incCount = state[cfg.incSet].size;
+    const excCount = state[cfg.excSet].size;
+
+    const bInc = document.getElementById(cfg.badgeIncId);
+    if (bInc) bInc.textContent = incCount;
+
+    const bExc = document.getElementById(cfg.badgeExcId);
+    if (bExc) bExc.textContent = excCount;
+
+    const hBadges = document.getElementById(cfg.headerBadgesId);
+    if (hBadges) {
+        let html = '';
+        if (incCount > 0) html += `<span class="badge-inc-mini">✓ ${incCount}</span>`;
+        if (excCount > 0) html += `<span class="badge-exc-mini">⊘ ${excCount}</span>`;
+        hBadges.innerHTML = html;
+    }
+
+    const sumElem = document.getElementById(cfg.summaryId);
+    if (sumElem) {
+        if (incCount === 0 && excCount === 0) {
+            sumElem.textContent = facetKey === 'location' ? 'Any location' : 'No filters selected';
+        } else if (incCount > 0 && excCount === 0) {
+            sumElem.textContent = `${incCount} included`;
+        } else if (incCount === 0 && excCount > 0) {
+            sumElem.textContent = `${excCount} excluded`;
+        } else {
+            sumElem.textContent = `${incCount} included, ${excCount} excluded`;
+        }
+    }
+}
+
+function syncAllFacetUI() {
+    ['dept', 'role', 'grade', 'pattern', 'contract', 'location'].forEach(k => {
+        syncFacetUI(k);
+    });
+}
+
+function switchFacetMode(facetKey, newMode) {
+    state.facetModes[facetKey] = newMode;
+    const tabs = document.querySelectorAll(`.facet-tab[data-facet="${facetKey}"]`);
+    tabs.forEach(tab => {
+        const mode = tab.dataset.mode;
+        tab.classList.toggle('active-include', mode === 'include' && newMode === 'include');
+        tab.classList.toggle('active-exclude', mode === 'exclude' && newMode === 'exclude');
+    });
+    syncFacetUI(facetKey);
+}
+
+function clearFacet(facetKey) {
+    const cfg = FACET_CONFIG[facetKey];
+    if (!cfg) return;
+    state[cfg.incSet].clear();
+    state[cfg.excSet].clear();
+    syncFacetUI(facetKey);
+    state.page = 1;
+    fetchJobs();
+}
+
 async function fetchFilterOptions() {
     try {
         const res = await fetch('/api/filters');
         const data = await res.json();
+        cachedFilterData = data;
 
-        // Departments
-        populateSelect(elements.filterDeptSelect, data.departments, 'All Departments', state.department);
-        
-        // Roles
-        populateSelect(elements.filterRoleSelect, data.role_types, 'All Types of Role', state.roleType);
-        
-        // Grades
-        if (data.job_grades && data.job_grades.length > 0) {
-            populateSelect(elements.filterGradeSelect, data.job_grades, 'All Job Grades', state.jobGrade);
-        }
+        // Populate checklists
+        renderFacetChecklist('dept', data.departments || []);
+        renderFacetChecklist('role', data.role_types || []);
+        renderFacetChecklist('grade', (data.job_grades && data.job_grades.length > 0) ? data.job_grades : [
+            "Administrative Assistant",
+            "Administrative Officer",
+            "Executive Officer",
+            "Higher Executive Officer",
+            "Senior Executive Officer",
+            "Grade 7",
+            "Grade 6",
+            "SCS Pay Band 1",
+            "SCS Pay Band 2",
+            "SCS Pay Band 3",
+            "Other"
+        ]);
+        renderFacetChecklist('pattern', (data.working_patterns && data.working_patterns.length > 0) ? data.working_patterns : [
+            "Full-time",
+            "Part-time",
+            "Flexible working",
+            "Job share",
+            "Compressed hours",
+            "Homeworking",
+            "Shift working"
+        ]);
+        renderFacetChecklist('contract', (data.contract_types && data.contract_types.length > 0) ? data.contract_types : [
+            "Permanent",
+            "Fixed term",
+            "Temporary",
+            "Loan",
+            "Secondment",
+            "Apprenticeship",
+            "Internship"
+        ]);
 
-        // Patterns
-        if (data.working_patterns && data.working_patterns.length > 0) {
-            populateSelect(elements.filterPatternSelect, data.working_patterns, 'All Working Patterns', state.workingPattern);
-        }
-
-        // Contracts
-        if (data.contract_types && data.contract_types.length > 0) {
-            populateSelect(elements.filterContractSelect, data.contract_types, 'All Contract Types', state.contractType);
-        }
+        syncAllFacetUI();
     } catch (err) {
         console.error('Error fetching filter options:', err);
     }
 }
 
-function populateSelect(selectElem, items, defaultLabel, currentValue) {
-    if (!selectElem || !items) return;
-    const current = currentValue || selectElem.value;
-    selectElem.innerHTML = `<option value="">${defaultLabel}</option>`;
-    items.forEach(item => {
-        if (!item) return;
-        const opt = document.createElement('option');
-        opt.value = item;
-        opt.textContent = item;
-        if (item === current) opt.selected = true;
-        selectElem.appendChild(opt);
-    });
-}
-
 function updateAccordionSummaries() {
-    elements.summaryLocation.textContent = state.location ? state.location : 'Any location';
-    elements.summaryRole.textContent = state.roleType ? state.roleType : 'No filters selected';
-    elements.summaryDept.textContent = state.department ? state.department : 'No filters selected';
-    
+    syncAllFacetUI();
+
     if (state.minSalary && state.maxSalary) {
         elements.summarySalary.textContent = `${formatSalary(state.minSalary)} to ${formatSalary(state.maxSalary)}`;
     } else if (state.minSalary) {
@@ -315,9 +621,6 @@ function updateAccordionSummaries() {
         elements.summarySalary.textContent = 'no minimum, no maximum';
     }
 
-    elements.summaryGrade.textContent = state.jobGrade ? state.jobGrade : 'No filters selected';
-    elements.summaryPattern.textContent = state.workingPattern ? state.workingPattern : 'No filters selected';
-    elements.summaryContract.textContent = state.contractType ? state.contractType : 'No filters selected';
     if (elements.summaryNumJobs) {
         elements.summaryNumJobs.textContent = state.numJobs ? (state.numJobs === '1' ? 'Single post (1)' : `${state.numJobs} posts`) : 'No filters selected';
     }
@@ -331,14 +634,23 @@ async function fetchJobs() {
     const offset = (state.page - 1) * state.limit;
     const params = new URLSearchParams();
     if (state.search) params.append("search", state.search);
-    if (state.department) params.append("department", state.department);
-    if (state.location) params.append("location", state.location);
+
+    // Multi-select inclusion & exclusion lists
+    state.departments.forEach(d => params.append("departments", d));
+    state.excludeDepartments.forEach(d => params.append("exclude_departments", d));
+    state.roleTypes.forEach(r => params.append("role_types", r));
+    state.excludeRoleTypes.forEach(r => params.append("exclude_role_types", r));
+    state.locations.forEach(l => params.append("locations", l));
+    state.excludeLocations.forEach(l => params.append("exclude_locations", l));
+    state.jobGrades.forEach(g => params.append("job_grades", g));
+    state.excludeJobGrades.forEach(g => params.append("exclude_job_grades", g));
+    state.workingPatterns.forEach(p => params.append("working_patterns", p));
+    state.excludeWorkingPatterns.forEach(p => params.append("exclude_working_patterns", p));
+    state.contractTypes.forEach(c => params.append("contract_types", c));
+    state.excludeContractTypes.forEach(c => params.append("exclude_contract_types", c));
+
     if (state.minSalary) params.append("min_salary", state.minSalary);
     if (state.maxSalary) params.append("max_salary", state.maxSalary);
-    if (state.jobGrade) params.append("job_grade", state.jobGrade);
-    if (state.roleType) params.append("role_type", state.roleType);
-    if (state.workingPattern) params.append("working_pattern", state.workingPattern);
-    if (state.contractType) params.append("contract_type", state.contractType);
     if (state.numJobs) params.append("number_of_jobs", state.numJobs);
     if (state.onlyNewToday) params.append("only_new_today", "true");
     params.append("limit", state.limit);
@@ -522,70 +834,140 @@ function updateToolbarSummary(visibleCount) {
             fetchJobs();
         });
     }
-    if (state.location) {
-        addTag(`Location: ${state.location}`, () => {
-            state.location = '';
-            elements.filterLocationInput.value = '';
-            document.querySelectorAll('.chip-sm').forEach(c => c.classList.remove('active'));
+    // Departments
+    state.departments.forEach(dept => {
+        addTag(`Dept: ${dept}`, () => {
+            state.departments.delete(dept);
+            syncFacetUI('dept');
             state.page = 1;
             fetchJobs();
-        });
-    }
-    if (state.roleType) {
-        addTag(`Role: ${state.roleType}`, () => {
-            state.roleType = '';
-            elements.filterRoleSelect.value = '';
+        }, 'include');
+    });
+    state.excludeDepartments.forEach(dept => {
+        addTag(`Exclude Dept: ${dept}`, () => {
+            state.excludeDepartments.delete(dept);
+            syncFacetUI('dept');
             state.page = 1;
             fetchJobs();
-        });
-    }
-    if (state.department) {
-        addTag(`Dept: ${state.department}`, () => {
-            state.department = '';
-            elements.filterDeptSelect.value = '';
+        }, 'exclude');
+    });
+
+    // Roles
+    state.roleTypes.forEach(role => {
+        addTag(`Role: ${role}`, () => {
+            state.roleTypes.delete(role);
+            syncFacetUI('role');
             state.page = 1;
             fetchJobs();
-        });
-    }
+        }, 'include');
+    });
+    state.excludeRoleTypes.forEach(role => {
+        addTag(`Exclude Role: ${role}`, () => {
+            state.excludeRoleTypes.delete(role);
+            syncFacetUI('role');
+            state.page = 1;
+            fetchJobs();
+        }, 'exclude');
+    });
+
+    // Locations
+    state.locations.forEach(loc => {
+        addTag(`Location: ${loc}`, () => {
+            state.locations.delete(loc);
+            syncFacetUI('location');
+            state.page = 1;
+            fetchJobs();
+        }, 'include');
+    });
+    state.excludeLocations.forEach(loc => {
+        addTag(`Exclude Location: ${loc}`, () => {
+            state.excludeLocations.delete(loc);
+            syncFacetUI('location');
+            state.page = 1;
+            fetchJobs();
+        }, 'exclude');
+    });
+
+    // Grades
+    state.jobGrades.forEach(grade => {
+        addTag(`Grade: ${grade}`, () => {
+            state.jobGrades.delete(grade);
+            syncFacetUI('grade');
+            state.page = 1;
+            fetchJobs();
+        }, 'include');
+    });
+    state.excludeJobGrades.forEach(grade => {
+        addTag(`Exclude Grade: ${grade}`, () => {
+            state.excludeJobGrades.delete(grade);
+            syncFacetUI('grade');
+            state.page = 1;
+            fetchJobs();
+        }, 'exclude');
+    });
+
+    // Patterns
+    state.workingPatterns.forEach(pattern => {
+        addTag(`Pattern: ${pattern}`, () => {
+            state.workingPatterns.delete(pattern);
+            syncFacetUI('pattern');
+            state.page = 1;
+            fetchJobs();
+        }, 'include');
+    });
+    state.excludeWorkingPatterns.forEach(pattern => {
+        addTag(`Exclude Pattern: ${pattern}`, () => {
+            state.excludeWorkingPatterns.delete(pattern);
+            syncFacetUI('pattern');
+            state.page = 1;
+            fetchJobs();
+        }, 'exclude');
+    });
+
+    // Contracts
+    state.contractTypes.forEach(contract => {
+        addTag(`Contract: ${contract}`, () => {
+            state.contractTypes.delete(contract);
+            syncFacetUI('contract');
+            state.page = 1;
+            fetchJobs();
+        }, 'include');
+    });
+    state.excludeContractTypes.forEach(contract => {
+        addTag(`Exclude Contract: ${contract}`, () => {
+            state.excludeContractTypes.delete(contract);
+            syncFacetUI('contract');
+            state.page = 1;
+            fetchJobs();
+        }, 'exclude');
+    });
+
     if (state.minSalary || state.maxSalary) {
         const sLabel = `Salary: ${state.minSalary ? formatSalary(state.minSalary) : '£0'} - ${state.maxSalary ? formatSalary(state.maxSalary) : 'Any'}`;
         addTag(sLabel, () => {
             state.minSalary = '';
             state.maxSalary = '';
-            elements.filterSalaryMin.value = '';
-            elements.filterSalaryMax.value = '';
+            if (elements.filterSalaryMin) elements.filterSalaryMin.value = '';
+            if (elements.filterSalaryMax) elements.filterSalaryMax.value = '';
             state.page = 1;
             fetchJobs();
         });
     }
-    if (state.jobGrade) {
-        addTag(`Grade: ${state.jobGrade}`, () => {
-            state.jobGrade = '';
-            elements.filterGradeSelect.value = '';
+
+    if (state.numJobs) {
+        addTag(`Posts: ${state.numJobs}`, () => {
+            state.numJobs = '';
+            if (elements.filterNumJobsSelect) elements.filterNumJobsSelect.value = '';
             state.page = 1;
             fetchJobs();
         });
     }
-    if (state.workingPattern) {
-        addTag(`Pattern: ${state.workingPattern}`, () => {
-            state.workingPattern = '';
-            elements.filterPatternSelect.value = '';
-            state.page = 1;
-            fetchJobs();
-        });
-    }
-    if (state.contractType) {
-        addTag(`Contract: ${state.contractType}`, () => {
-            state.contractType = '';
-            elements.filterContractSelect.value = '';
-            state.page = 1;
-            fetchJobs();
-        });
-    }
+
     if (state.onlyNewToday) {
         addTag(`New Today Only`, () => {
             state.onlyNewToday = false;
             elements.onlyNewTodayCheckbox.checked = false;
+            updateNewTodayVisuals(false);
             state.page = 1;
             fetchJobs();
         });
@@ -593,14 +975,8 @@ function updateToolbarSummary(visibleCount) {
 }
 
 function applySidebarFilters() {
-    state.location = elements.filterLocationInput.value.trim();
-    state.roleType = elements.filterRoleSelect.value;
-    state.department = elements.filterDeptSelect.value;
-    state.minSalary = elements.filterSalaryMin.value;
-    state.maxSalary = elements.filterSalaryMax.value;
-    state.jobGrade = elements.filterGradeSelect.value;
-    state.workingPattern = elements.filterPatternSelect.value;
-    state.contractType = elements.filterContractSelect.value;
+    state.minSalary = elements.filterSalaryMin ? elements.filterSalaryMin.value : '';
+    state.maxSalary = elements.filterSalaryMax ? elements.filterSalaryMax.value : '';
     state.numJobs = elements.filterNumJobsSelect ? elements.filterNumJobsSelect.value : '';
     state.page = 1;
     fetchJobs();
@@ -608,34 +984,42 @@ function applySidebarFilters() {
 
 function resetAllFilters() {
     state.search = '';
-    state.location = '';
-    state.roleType = '';
-    state.department = '';
     state.minSalary = '';
     state.maxSalary = '';
-    state.jobGrade = '';
-    state.workingPattern = '';
-    state.contractType = '';
     state.numJobs = '';
     state.onlyNewToday = false;
     state.page = 1;
 
-    elements.searchInput.value = '';
-    elements.clearSearchBtn.classList.add('hidden');
-    elements.filterLocationInput.value = '';
-    elements.filterRoleSelect.value = '';
-    elements.filterDeptSelect.value = '';
-    elements.filterSalaryMin.value = '';
-    elements.filterSalaryMax.value = '';
-    elements.filterGradeSelect.value = '';
-    elements.filterPatternSelect.value = '';
-    elements.filterContractSelect.value = '';
+    state.departments.clear();
+    state.excludeDepartments.clear();
+    state.roleTypes.clear();
+    state.excludeRoleTypes.clear();
+    state.locations.clear();
+    state.excludeLocations.clear();
+    state.jobGrades.clear();
+    state.excludeJobGrades.clear();
+    state.workingPatterns.clear();
+    state.excludeWorkingPatterns.clear();
+    state.contractTypes.clear();
+    state.excludeContractTypes.clear();
+
+    if (elements.searchInput) elements.searchInput.value = '';
+    if (elements.clearSearchBtn) elements.clearSearchBtn.classList.add('hidden');
+    if (elements.filterLocationInput) elements.filterLocationInput.value = '';
+    if (elements.filterSalaryMin) elements.filterSalaryMin.value = '';
+    if (elements.filterSalaryMax) elements.filterSalaryMax.value = '';
     if (elements.filterNumJobsSelect) elements.filterNumJobsSelect.value = '';
-    elements.onlyNewTodayCheckbox.checked = false;
+    if (elements.onlyNewTodayCheckbox) elements.onlyNewTodayCheckbox.checked = false;
     updateNewTodayVisuals(false);
 
-    document.querySelectorAll('.chip-sm').forEach(c => c.classList.remove('active'));
+    document.querySelectorAll('.facet-search-box').forEach(inp => {
+        inp.value = '';
+    });
+    document.querySelectorAll('.facet-checklist .facet-item').forEach(item => {
+        item.style.display = 'flex';
+    });
 
+    syncAllFacetUI();
     fetchJobs();
 }
 
@@ -855,44 +1239,112 @@ function setupEventListeners() {
     });
 
     // Update Results button
-    elements.updateResultsBtn.addEventListener('click', applySidebarFilters);
+    if (elements.updateResultsBtn) {
+        elements.updateResultsBtn.addEventListener('click', applySidebarFilters);
+    }
     
-    // Direct change on selects also immediately updates results
+    // Direct change on salary and post count selects
     [
-        elements.filterRoleSelect,
-        elements.filterDeptSelect,
         elements.filterSalaryMin,
         elements.filterSalaryMax,
-        elements.filterGradeSelect,
-        elements.filterPatternSelect,
-        elements.filterContractSelect,
         elements.filterNumJobsSelect
     ].filter(Boolean).forEach(select => {
         select.addEventListener('change', applySidebarFilters);
     });
 
-    // Location text input (enter key or debounce)
-    elements.filterLocationInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            applySidebarFilters();
-        }
+    // Facet Tab switching (Include vs Exclude)
+    document.querySelectorAll('.facet-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            const facet = tab.dataset.facet;
+            const mode = tab.dataset.mode;
+            if (facet && mode) {
+                switchFacetMode(facet, mode);
+            }
+        });
+    });
+
+    // In-facet search filtering
+    document.querySelectorAll('.facet-search-box').forEach(box => {
+        box.addEventListener('input', (e) => {
+            const targetId = box.dataset.target;
+            const term = e.target.value.toLowerCase().trim();
+            const target = document.getElementById(targetId);
+            if (target) {
+                target.querySelectorAll('.facet-item').forEach(item => {
+                    const text = item.textContent.toLowerCase();
+                    item.style.display = text.includes(term) ? 'flex' : 'none';
+                });
+            }
+        });
+    });
+
+    // Facet Clear buttons
+    document.querySelectorAll('.facet-clear-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const facet = btn.dataset.facet;
+            if (facet) {
+                clearFacet(facet);
+            }
+        });
     });
 
     // Quick location chips
-    document.querySelectorAll('.chip-sm').forEach(chip => {
+    document.querySelectorAll('#quickLocChips .chip-sm').forEach(chip => {
         chip.addEventListener('click', () => {
             const loc = chip.dataset.loc;
-            if (chip.classList.contains('active')) {
-                chip.classList.remove('active');
-                elements.filterLocationInput.value = '';
+            if (!loc) return;
+            const mode = state.facetModes.location || 'include';
+            if (mode === 'include') {
+                if (state.locations.has(loc)) {
+                    state.locations.delete(loc);
+                } else {
+                    state.locations.add(loc);
+                    state.excludeLocations.delete(loc);
+                }
             } else {
-                document.querySelectorAll('.chip-sm').forEach(c => c.classList.remove('active'));
-                chip.classList.add('active');
-                elements.filterLocationInput.value = loc;
+                if (state.excludeLocations.has(loc)) {
+                    state.excludeLocations.delete(loc);
+                } else {
+                    state.excludeLocations.add(loc);
+                    state.locations.delete(loc);
+                }
             }
-            applySidebarFilters();
+            syncFacetUI('location');
+            state.page = 1;
+            fetchJobs();
         });
     });
+
+    // Location text input and Add button
+    const handleAddLocation = () => {
+        if (!elements.filterLocationInput) return;
+        const val = elements.filterLocationInput.value.trim();
+        if (!val) return;
+        const mode = state.facetModes.location || 'include';
+        if (mode === 'include') {
+            state.locations.add(val);
+            state.excludeLocations.delete(val);
+        } else {
+            state.excludeLocations.add(val);
+            state.locations.delete(val);
+        }
+        elements.filterLocationInput.value = '';
+        syncFacetUI('location');
+        state.page = 1;
+        fetchJobs();
+    };
+
+    if (elements.addLocationBtn) {
+        elements.addLocationBtn.addEventListener('click', handleAddLocation);
+    }
+    if (elements.filterLocationInput) {
+        elements.filterLocationInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                handleAddLocation();
+            }
+        });
+    }
 
     // Reset buttons
     elements.resetAllFiltersBtn.addEventListener('click', resetAllFilters);
@@ -1585,29 +2037,33 @@ async function handleSavePreferences(e, applyToSearch = false) {
 
 function applyPreferencesToDashboard(prefs) {
     if (!prefs) return;
-    if (prefs.locations && prefs.locations.length > 0) {
-        elements.filterLocationInput.value = prefs.locations[0];
+    if (prefs.locations && Array.isArray(prefs.locations)) {
+        prefs.locations.forEach(loc => state.locations.add(loc));
     }
     if (prefs.min_salary) {
-        elements.filterSalaryMin.value = prefs.min_salary;
+        state.minSalary = String(prefs.min_salary);
+        if (elements.filterSalaryMin) elements.filterSalaryMin.value = state.minSalary;
     }
     if (prefs.max_salary) {
-        elements.filterSalaryMax.value = prefs.max_salary;
+        state.maxSalary = String(prefs.max_salary);
+        if (elements.filterSalaryMax) elements.filterSalaryMax.value = state.maxSalary;
     }
     if (prefs.job_grade) {
-        elements.filterGradeSelect.value = prefs.job_grade;
+        state.jobGrades.add(prefs.job_grade);
     }
     if (prefs.role_type) {
-        elements.filterRoleSelect.value = prefs.role_type;
+        state.roleTypes.add(prefs.role_type);
     }
     if (prefs.working_pattern) {
-        elements.filterPatternSelect.value = prefs.working_pattern;
+        state.workingPatterns.add(prefs.working_pattern);
     }
     if (prefs.contract_type) {
-        elements.filterContractSelect.value = prefs.contract_type;
+        state.contractTypes.add(prefs.contract_type);
     }
-    applySidebarFilters();
-    elements.matchProfileBtn.classList.add('active');
+    syncAllFacetUI();
+    state.page = 1;
+    fetchJobs();
+    if (elements.matchProfileBtn) elements.matchProfileBtn.classList.add('active');
 }
 
 function handleMatchProfile() {

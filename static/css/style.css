@@ -539,6 +539,283 @@ details[open] .accordion-icon {
     color: #e0e7ff;
 }
 
+.chip-sm.chip-include {
+    background: rgba(16, 185, 129, 0.2);
+    border-color: #10b981;
+    color: #34d399;
+    font-weight: 600;
+}
+
+.chip-sm.chip-exclude {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: #ef4444;
+    color: #f87171;
+    font-weight: 600;
+    text-decoration: line-through;
+}
+
+.accordion-header-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+
+.accordion-badges {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.badge-inc-mini {
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.badge-exc-mini {
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+/* Facet segmented tabs */
+.facet-tabs {
+    display: flex;
+    gap: 4px;
+    background: rgba(0, 0, 0, 0.25);
+    padding: 3px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-subtle);
+}
+
+.facet-tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 5px 8px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    font-family: inherit;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.facet-tab:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.facet-tab.active-include {
+    background: rgba(16, 185, 129, 0.18);
+    color: #34d399;
+    font-weight: 700;
+    border-color: rgba(16, 185, 129, 0.4);
+    box-shadow: 0 1px 4px rgba(16, 185, 129, 0.15);
+}
+
+.facet-tab.active-exclude {
+    background: rgba(239, 68, 68, 0.18);
+    color: #f87171;
+    font-weight: 700;
+    border-color: rgba(239, 68, 68, 0.4);
+    box-shadow: 0 1px 4px rgba(239, 68, 68, 0.15);
+}
+
+.facet-badge {
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 0px 5px;
+    border-radius: 9999px;
+    min-width: 16px;
+    text-align: center;
+}
+
+.facet-badge.include-badge {
+    background: rgba(16, 185, 129, 0.25);
+    color: #10b981;
+}
+
+.facet-badge.exclude-badge {
+    background: rgba(239, 68, 68, 0.25);
+    color: #ef4444;
+}
+
+/* Facet toolbar & in-accordion search */
+.facet-toolbar {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.facet-search-box {
+    flex: 1;
+    padding: 6px 10px;
+    font-size: 0.78rem;
+    font-family: inherit;
+    background: var(--bg-surface-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+
+.facet-search-box:focus {
+    border-color: var(--primary);
+}
+
+.facet-clear-btn {
+    padding: 5px 8px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.facet-clear-btn:hover {
+    color: #f87171;
+    border-color: rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.08);
+}
+
+/* Checklist options container */
+.facet-checklist {
+    max-height: 190px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.18);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-subtle) transparent;
+}
+
+.facet-checklist::-webkit-scrollbar {
+    width: 5px;
+}
+
+.facet-checklist::-webkit-scrollbar-thumb {
+    background: var(--border-subtle);
+    border-radius: 4px;
+}
+
+.facet-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    line-height: 1.35;
+    color: var(--text-secondary);
+    user-select: none;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+
+.facet-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+}
+
+.facet-item input[type="checkbox"] {
+    margin-top: 2px;
+    cursor: pointer;
+    accent-color: #10b981;
+}
+
+.facet-checklist.exclude-mode .facet-item input[type="checkbox"] {
+    accent-color: #ef4444;
+}
+
+.facet-item.is-included {
+    background: rgba(16, 185, 129, 0.12);
+    color: #34d399;
+    font-weight: 600;
+}
+
+.facet-item.is-excluded {
+    background: rgba(239, 68, 68, 0.12);
+    color: #f87171;
+    font-weight: 600;
+    text-decoration: line-through;
+}
+
+.facet-item .facet-text {
+    flex: 1;
+    word-break: break-word;
+}
+
+/* Location multi-filter elements */
+.location-input-wrap {
+    display: flex;
+    gap: 6px;
+}
+
+.location-input-wrap .form-control {
+    flex: 1;
+}
+
+.selected-facet-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 4px;
+}
+
+.selected-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.72rem;
+    padding: 2px 7px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.selected-chip.chip-include {
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #34d399;
+}
+
+.selected-chip.chip-exclude {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #f87171;
+}
+
+.selected-chip .chip-remove {
+    font-size: 0.85rem;
+    line-height: 1;
+    color: inherit;
+    margin-left: 2px;
+}
+
 .salary-inputs-row {
     display: flex;
     gap: 8px;
@@ -737,6 +1014,28 @@ input:checked + .toggle-slider:before {
 
 .chip:hover {
     background: rgba(99, 102, 241, 0.3);
+}
+
+.chip.chip-include {
+    background: rgba(16, 185, 129, 0.12);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.chip.chip-include:hover {
+    background: rgba(16, 185, 129, 0.22);
+    border-color: #10b981;
+}
+
+.chip.chip-exclude {
+    background: rgba(239, 68, 68, 0.12);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.chip.chip-exclude:hover {
+    background: rgba(239, 68, 68, 0.22);
+    border-color: #ef4444;
 }
 
 /* Job Cards Grid */
