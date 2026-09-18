@@ -463,11 +463,17 @@ function syncFacetUI(facetKey) {
 }
 
 function syncLocationUI() {
+    const isAllActive = state.locations.size === 0 && state.excludeLocations.size === 0;
+
     // Quick chips update
     document.querySelectorAll('#quickLocChips .chip-sm').forEach(chip => {
         const loc = chip.dataset.loc;
-        chip.classList.remove('active', 'chip-include', 'chip-exclude');
-        if (state.locations.has(loc)) {
+        chip.classList.remove('active', 'chip-include', 'chip-exclude', 'chip-all-active');
+        if (loc === 'ALL') {
+            if (isAllActive) {
+                chip.classList.add('active', 'chip-all-active');
+            }
+        } else if (state.locations.has(loc)) {
             chip.classList.add('chip-include');
         } else if (state.excludeLocations.has(loc)) {
             chip.classList.add('chip-exclude');
@@ -523,7 +529,7 @@ function syncFacetBadges(facetKey) {
     const sumElem = document.getElementById(cfg.summaryId);
     if (sumElem) {
         if (incCount === 0 && excCount === 0) {
-            sumElem.textContent = facetKey === 'location' ? 'Any location' : 'No filters selected';
+            sumElem.textContent = facetKey === 'location' ? 'All locations (UK-wide & Remote)' : 'No filters selected';
         } else if (incCount > 0 && excCount === 0) {
             sumElem.textContent = `${incCount} included`;
         } else if (incCount === 0 && excCount > 0) {
@@ -1293,6 +1299,14 @@ function setupEventListeners() {
         chip.addEventListener('click', () => {
             const loc = chip.dataset.loc;
             if (!loc) return;
+            if (loc === 'ALL') {
+                state.locations.clear();
+                state.excludeLocations.clear();
+                syncFacetUI('location');
+                state.page = 1;
+                fetchJobs();
+                return;
+            }
             const mode = state.facetModes.location || 'include';
             if (mode === 'include') {
                 if (state.locations.has(loc)) {

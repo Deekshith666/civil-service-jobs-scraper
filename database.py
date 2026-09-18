@@ -71,6 +71,65 @@ def parse_salary_range(salary_str: Optional[str]) -> Tuple[Optional[int], Option
     return min(valid_salaries), max(valid_salaries)
 
 
+MONTH_MAP = {
+    'january': '01', 'jan': '01',
+    'february': '02', 'feb': '02',
+    'march': '03', 'mar': '03',
+    'april': '04', 'apr': '04',
+    'may': '05',
+    'june': '06', 'jun': '06',
+    'july': '07', 'jul': '07',
+    'august': '08', 'aug': '08',
+    'september': '09', 'sep': '09', 'sept': '09',
+    'october': '10', 'oct': '10',
+    'november': '11', 'nov': '11',
+    'december': '12', 'dec': '12'
+}
+
+
+def parse_closing_date_to_iso(date_str: Optional[str]) -> Optional[str]:
+    """
+    Parse a closing date string into ISO format YYYY-MM-DD.
+    Handles:
+      - '2026-10-05'
+      - '11:55 pm on Monday 5th October 2026'
+      - 'Sunday 18th October 2026'
+      - '18 October 2026'
+      - '05/10/2026'
+    """
+    if not date_str:
+        return None
+    s = str(date_str).strip()
+    if not s:
+        return None
+
+    # Check for direct ISO YYYY-MM-DD
+    iso_match = re.search(r'\b(20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b', s)
+    if iso_match:
+        return f"{iso_match.group(1)}-{iso_match.group(2)}-{iso_match.group(3)}"
+
+    # Match '5th October 2026' or '18 October 2026' or '5 Oct 2026'
+    text_match = re.search(r'\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\s+(20\d{2})\b', s)
+    if text_match:
+        day = int(text_match.group(1))
+        month_name = text_match.group(2).lower()
+        year = text_match.group(3)
+        month_num = MONTH_MAP.get(month_name)
+        if month_num and 1 <= day <= 31:
+            return f"{year}-{month_num}-{day:02d}"
+
+    # Match DD/MM/YYYY or DD-MM-YYYY
+    dmy_match = re.search(r'\b(0?[1-9]|[12]\d|3[01])[/-](0?[1-9]|1[0-2])[/-](20\d{2})\b', s)
+    if dmy_match:
+        day = int(dmy_match.group(1))
+        month = int(dmy_match.group(2))
+        year = dmy_match.group(3)
+        return f"{year}-{month:02d}-{day:02d}"
+
+    return None
+
+
+
 def get_jobs_db_connection() -> sqlite3.Connection:
     """
     Create and return a database connection to the scraped jobs catalog.
@@ -184,6 +243,7 @@ def init_jobs_db():
                 ("working_pattern", "TEXT"),
                 ("contract_type", "TEXT"),
                 ("number_of_jobs", "INTEGER DEFAULT 1"),
+                ("closing_date_iso", "TEXT"),
             ]
             for col_name, col_type in new_columns:
                 if col_name not in existing_cols:
@@ -206,6 +266,7 @@ def init_jobs_db():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_dept ON jobs(department)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_first_seen ON jobs(first_seen_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_closing ON jobs(closing_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_closing_iso ON jobs(closing_date_iso)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_salary_min ON jobs(salary_min)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_salary_max ON jobs(salary_max)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_grade ON jobs(job_grade)")
@@ -457,10 +518,79 @@ def init_users_db():
 
 
 def init_db():
-    """Initialize both jobs catalog and user store schemas."""
+    """Initialize both jobs catalog and user store schemas, then backfill and purge expired records."""
     init_jobs_db()
     init_users_db()
+    backfill_closing_dates()
+    cleanup_expired_jobs()
 
+
+def backfill_closing_dates() -> int:
+    """Populate closing_date_iso for jobs where it is missing."""
+    if not is_jobs_db_writable():
+        return 0
+    updated = 0
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(jobs)")
+            cols = {row[1] for row in cursor.fetchall()}
+            if "closing_date_iso" not in cols:
+                return 0
+            cursor.execute("SELECT reference_number, closing_date FROM jobs WHERE closing_date IS NOT NULL AND (closing_date_iso IS NULL OR closing_date_iso = '')")
+            rows = cursor.fetchall()
+            for ref, c_date in rows:
+                c_iso = parse_closing_date_to_iso(c_date)
+                if c_iso:
+                    cursor.execute("UPDATE jobs SET closing_date_iso = ? WHERE reference_number = ?", (c_iso, ref))
+                    updated += 1
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"Failed to backfill closing_date_iso: {e}")
+    return updated
+
+
+def cleanup_expired_jobs() -> int:
+    """
+    Permanently remove expired jobs (where closing date is before today) from writable databases.
+    Returns total count of removed records.
+    """
+    today_iso = date.today().isoformat()
+    total_cleaned = 0
+
+    if is_jobs_db_writable():
+        try:
+            with get_jobs_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(jobs)")
+                cols = {row[1] for row in cursor.fetchall()}
+                if "closing_date_iso" in cols:
+                    cursor.execute("DELETE FROM jobs WHERE closing_date_iso IS NOT NULL AND closing_date_iso < ?", (today_iso,))
+                    del_count = cursor.rowcount
+                    conn.commit()
+                    if del_count > 0:
+                        logger.info(f"Cleaned up {del_count} expired jobs from primary jobs.db")
+                    total_cleaned += del_count
+        except Exception as e:
+            logger.warning(f"Failed to cleanup expired jobs from jobs.db: {e}")
+
+    if SYNCED_JOBS_DB_PATH.exists():
+        try:
+            with sqlite3.connect(str(SYNCED_JOBS_DB_PATH)) as conn:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(jobs)")
+                cols = {row[1] for row in cursor.fetchall()}
+                if "closing_date_iso" in cols:
+                    cursor.execute("DELETE FROM jobs WHERE closing_date_iso IS NOT NULL AND closing_date_iso < ?", (today_iso,))
+                    del_count = cursor.rowcount
+                    conn.commit()
+                    if del_count > 0:
+                        logger.info(f"Cleaned up {del_count} expired jobs from synced_jobs.db")
+                    total_cleaned += del_count
+        except Exception as e:
+            logger.warning(f"Failed to cleanup expired jobs from synced_jobs.db: {e}")
+
+    return total_cleaned
 
 
 def backfill_salary_ranges():
@@ -515,6 +645,21 @@ def upsert_job(job_data: Dict) -> bool:
     if s_min is None and s_max is None and job_data.get("salary"):
         s_min, s_max = parse_salary_range(job_data.get("salary"))
 
+    closing_iso = job_data.get("closing_date_iso") or parse_closing_date_to_iso(job_data.get("closing_date"))
+    today_iso = date.today().isoformat()
+
+    # If job is already expired, delete if it exists and do not insert
+    if closing_iso and closing_iso < today_iso:
+        if is_jobs_db_writable():
+            try:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM jobs WHERE reference_number = ?", (ref,))
+                    conn.commit()
+            except Exception:
+                pass
+        return False
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT first_seen_at FROM jobs WHERE reference_number = ?", (ref,))
@@ -535,6 +680,7 @@ def upsert_job(job_data: Dict) -> bool:
                     working_pattern = COALESCE(?, working_pattern),
                     contract_type = COALESCE(?, contract_type),
                     closing_date = ?,
+                    closing_date_iso = COALESCE(?, closing_date_iso),
                     job_url = ?,
                     logo_url = ?,
                     last_scraped_at = ?
@@ -551,6 +697,7 @@ def upsert_job(job_data: Dict) -> bool:
                 job_data.get("working_pattern"),
                 job_data.get("contract_type"),
                 job_data.get("closing_date", ""),
+                closing_iso,
                 job_data.get("job_url", ""),
                 job_data.get("logo_url", ""),
                 now_iso,
@@ -565,9 +712,9 @@ def upsert_job(job_data: Dict) -> bool:
                     reference_number, title, department, location,
                     salary, salary_min, salary_max,
                     job_grade, role_type, working_pattern, contract_type,
-                    closing_date, job_url, logo_url,
+                    closing_date, closing_date_iso, job_url, logo_url,
                     first_seen_at, last_scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 ref,
                 job_data.get("title", ""),
@@ -581,6 +728,7 @@ def upsert_job(job_data: Dict) -> bool:
                 job_data.get("working_pattern"),
                 job_data.get("contract_type"),
                 job_data.get("closing_date", ""),
+                closing_iso,
                 job_data.get("job_url", ""),
                 job_data.get("logo_url", ""),
                 now_iso,
@@ -628,6 +776,7 @@ def init_synced_jobs_db():
                     location TEXT,
                     salary TEXT,
                     closing_date TEXT,
+                    closing_date_iso TEXT,
                     job_url TEXT,
                     logo_url TEXT,
                     first_seen_at TEXT NOT NULL,
@@ -641,9 +790,17 @@ def init_synced_jobs_db():
                     number_of_jobs INTEGER DEFAULT 1
                 )
             """)
+            cursor.execute("PRAGMA table_info(jobs)")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+            if "closing_date_iso" not in existing_cols:
+                cursor.execute("ALTER TABLE jobs ADD COLUMN closing_date_iso TEXT")
+            if "number_of_jobs" not in existing_cols:
+                cursor.execute("ALTER TABLE jobs ADD COLUMN number_of_jobs INTEGER DEFAULT 1")
+
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_synced_jobs_dept ON jobs(department)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_synced_jobs_first_seen ON jobs(first_seen_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_synced_jobs_closing ON jobs(closing_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_synced_jobs_closing_iso ON jobs(closing_date_iso)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_synced_jobs_num_jobs ON jobs(number_of_jobs)")
             conn.commit()
     except Exception as e:
@@ -660,6 +817,7 @@ def sync_live_jobs(jobs_list: List[Dict]) -> Dict:
     inserted_count = 0
     updated_count = 0
     now_iso = datetime.now().isoformat()
+    today_iso = date.today().isoformat()
 
     try:
         with sqlite3.connect(str(SYNCED_JOBS_DB_PATH)) as conn:
@@ -675,6 +833,13 @@ def sync_live_jobs(jobs_list: List[Dict]) -> Dict:
                 if s_min is None and s_max is None and job.get("salary"):
                     s_min, s_max = parse_salary_range(job.get("salary"))
 
+                closing_iso = job.get("closing_date_iso") or parse_closing_date_to_iso(job.get("closing_date"))
+
+                # If job is expired, delete and skip
+                if closing_iso and closing_iso < today_iso:
+                    cursor.execute("DELETE FROM jobs WHERE reference_number = ?", (ref,))
+                    continue
+
                 num_jobs = job.get("number_of_jobs", 1)
                 first_seen = job.get("first_seen_at") or now_iso
                 last_scraped = job.get("last_scraped_at") or now_iso
@@ -685,7 +850,8 @@ def sync_live_jobs(jobs_list: List[Dict]) -> Dict:
                     cursor.execute("""
                         UPDATE jobs SET
                             title = ?, department = ?, location = ?, salary = ?,
-                            closing_date = ?, job_url = ?, logo_url = ?, last_scraped_at = ?,
+                            closing_date = ?, closing_date_iso = COALESCE(?, closing_date_iso),
+                            job_url = ?, logo_url = ?, last_scraped_at = ?,
                             salary_min = COALESCE(?, salary_min), salary_max = COALESCE(?, salary_max),
                             job_grade = COALESCE(?, job_grade), role_type = COALESCE(?, role_type),
                             working_pattern = COALESCE(?, working_pattern), contract_type = COALESCE(?, contract_type),
@@ -693,7 +859,8 @@ def sync_live_jobs(jobs_list: List[Dict]) -> Dict:
                         WHERE reference_number = ?
                     """, (
                         job.get("title", ""), job.get("department", ""), job.get("location", ""), job.get("salary", ""),
-                        job.get("closing_date", ""), job.get("job_url", ""), job.get("logo_url", ""), last_scraped,
+                        job.get("closing_date", ""), closing_iso,
+                        job.get("job_url", ""), job.get("logo_url", ""), last_scraped,
                         s_min, s_max, job.get("job_grade"), job.get("role_type"),
                         job.get("working_pattern"), job.get("contract_type"),
                         num_jobs, ref
@@ -704,13 +871,14 @@ def sync_live_jobs(jobs_list: List[Dict]) -> Dict:
                     cursor.execute("""
                         INSERT INTO jobs (
                             reference_number, title, department, location, salary,
-                            closing_date, job_url, logo_url, first_seen_at, last_scraped_at,
+                            closing_date, closing_date_iso, job_url, logo_url, first_seen_at, last_scraped_at,
                             salary_min, salary_max, job_grade, role_type, working_pattern, contract_type,
                             number_of_jobs
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         ref, job.get("title", ""), job.get("department", ""), job.get("location", ""), job.get("salary", ""),
-                        job.get("closing_date", ""), job.get("job_url", ""), job.get("logo_url", ""),
+                        job.get("closing_date", ""), closing_iso,
+                        job.get("job_url", ""), job.get("logo_url", ""),
                         first_seen, last_scraped, s_min, s_max,
                         job.get("job_grade"), job.get("role_type"), job.get("working_pattern"), job.get("contract_type"),
                         num_jobs
@@ -729,6 +897,9 @@ def sync_live_jobs(jobs_list: List[Dict]) -> Dict:
             except Exception:
                 pass
 
+    # Run cleanup of expired jobs across catalogs
+    cleanup_expired_jobs()
+
     total_jobs = count_jobs()
     return {
         "received": len(jobs_list),
@@ -740,17 +911,18 @@ def sync_live_jobs(jobs_list: List[Dict]) -> Dict:
 
 
 def get_today_new_jobs(limit: Optional[int] = None) -> List[Dict]:
-    """Retrieve all jobs first detected today (for live syncing to production)."""
+    """Retrieve all active jobs first detected today (for live syncing to production)."""
     today_prefix = date.today().isoformat() + "%"
+    today_iso = date.today().isoformat()
     with get_jobs_db_connection() as conn:
         tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        query = f"SELECT * FROM {tbl} WHERE first_seen_at LIKE ? ORDER BY first_seen_at DESC"
+        query = f"SELECT * FROM {tbl} WHERE (closing_date_iso IS NULL OR closing_date_iso >= ?) AND first_seen_at LIKE ? ORDER BY first_seen_at DESC"
         if limit:
             query += f" LIMIT {int(limit)}"
-            cursor.execute(query, (today_prefix,))
+            cursor.execute(query, (today_iso, today_prefix))
         else:
-            cursor.execute(query, (today_prefix,))
+            cursor.execute(query, (today_iso, today_prefix))
         return [dict(row) for row in cursor.fetchall()]
 
 
@@ -827,9 +999,18 @@ def _build_jobs_where_clause(
     inc_locs = _normalize_filter_list(locations) + _normalize_filter_list(location)
     inc_locs = list(dict.fromkeys(inc_locs))
     if inc_locs:
-        or_clauses = ["location LIKE ?" for _ in inc_locs]
-        where_clauses.append(f"({' OR '.join(or_clauses)})")
-        params.extend([f"%{loc}%" for loc in inc_locs])
+        is_all = any(l.strip().upper() in ("ALL", "ALL LOCATIONS", "ALL LOCATION", "ANY", "ANY LOCATION") for l in inc_locs)
+        if not is_all:
+            loc_clauses = []
+            for loc in inc_locs:
+                if loc.lower() in ("remote", "national / remote", "remote working", "remote working (anywhere in the uk)"):
+                    loc_clauses.append("(location LIKE '%Remote%' OR location LIKE '%National%')")
+                else:
+                    loc_clauses.append("location LIKE ?")
+                    params.append(f"%{loc}%")
+            if loc_clauses:
+                where_clauses.append(f"({' OR '.join(loc_clauses)})")
+
 
     # Location exclusion
     exc_locs = list(dict.fromkeys(_normalize_filter_list(exclude_locations)))
@@ -933,6 +1114,11 @@ def _build_jobs_where_clause(
         where_clauses.append("first_seen_at LIKE ?")
         params.append(today_prefix)
 
+    # Exclude expired jobs across all queries
+    today_iso = date.today().isoformat()
+    where_clauses.append("(closing_date_iso IS NULL OR closing_date_iso >= ?)")
+    params.append(today_iso)
+
     sql_where = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else " WHERE 1=1"
     return sql_where, params
 
@@ -961,12 +1147,12 @@ def get_jobs(
     exclude_contract_types: Optional[List[str]] = None,
     number_of_jobs: str = "",
     only_new_today: bool = False,
-    limit: int = 50,
-    offset: int = 0,
     sort_by: str = "first_seen_at",
-    sort_order: str = "desc"
+    sort_order: str = "desc",
+    limit: int = 50,
+    offset: int = 0
 ) -> List[Dict]:
-    """Retrieve jobs with full multi-facet filtering, salary range, exclusions, sorting, and pagination."""
+    """Retrieve jobs based on combined filters, multi-selections, exclusions, and sorting."""
     where_sql, params = _build_jobs_where_clause(
         search=search,
         department=department,
@@ -995,7 +1181,7 @@ def get_jobs(
 
     allowed_sorts = {
         "first_seen_at": "first_seen_at",
-        "closing_date": "closing_date",
+        "closing_date": "COALESCE(closing_date_iso, closing_date)",
         "title": "title",
         "department": "department",
         "salary_min": "salary_min",
@@ -1091,29 +1277,32 @@ def get_job_by_reference(reference_number: str) -> Optional[Dict]:
 
 
 def get_departments() -> List[str]:
-    """Get unique list of departments."""
+    """Get unique list of departments for active jobs."""
+    today_iso = date.today().isoformat()
     with get_db_connection() as conn:
         tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute(f"SELECT DISTINCT department FROM {tbl} WHERE department IS NOT NULL AND department != '' ORDER BY department ASC")
+        cursor.execute(f"SELECT DISTINCT department FROM {tbl} WHERE (closing_date_iso IS NULL OR closing_date_iso >= ?) AND department IS NOT NULL AND department != '' ORDER BY department ASC", (today_iso,))
         return [row[0] for row in cursor.fetchall()]
 
 
 def get_job_grades() -> List[str]:
-    """Get unique list of job grades."""
+    """Get unique list of job grades for active jobs."""
+    today_iso = date.today().isoformat()
     with get_db_connection() as conn:
         tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute(f"SELECT DISTINCT job_grade FROM {tbl} WHERE job_grade IS NOT NULL AND job_grade != '' ORDER BY job_grade ASC")
+        cursor.execute(f"SELECT DISTINCT job_grade FROM {tbl} WHERE (closing_date_iso IS NULL OR closing_date_iso >= ?) AND job_grade IS NOT NULL AND job_grade != '' ORDER BY job_grade ASC", (today_iso,))
         return [row[0] for row in cursor.fetchall()]
 
 
 def get_role_types() -> List[str]:
-    """Get unique list of role types."""
+    """Get unique list of role types for active jobs."""
+    today_iso = date.today().isoformat()
     with get_db_connection() as conn:
         tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute(f"SELECT DISTINCT role_type FROM {tbl} WHERE role_type IS NOT NULL AND role_type != '' ORDER BY role_type ASC")
+        cursor.execute(f"SELECT DISTINCT role_type FROM {tbl} WHERE (closing_date_iso IS NULL OR closing_date_iso >= ?) AND role_type IS NOT NULL AND role_type != '' ORDER BY role_type ASC", (today_iso,))
         # Role types can be comma separated
         unique_roles = set()
         for row in cursor.fetchall():
@@ -1125,11 +1314,12 @@ def get_role_types() -> List[str]:
 
 
 def get_contract_types() -> List[str]:
-    """Get unique list of contract types."""
+    """Get unique list of contract types for active jobs."""
+    today_iso = date.today().isoformat()
     with get_db_connection() as conn:
         tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute(f"SELECT DISTINCT contract_type FROM {tbl} WHERE contract_type IS NOT NULL AND contract_type != '' ORDER BY contract_type ASC")
+        cursor.execute(f"SELECT DISTINCT contract_type FROM {tbl} WHERE (closing_date_iso IS NULL OR closing_date_iso >= ?) AND contract_type IS NOT NULL AND contract_type != '' ORDER BY contract_type ASC", (today_iso,))
         unique_contracts = set()
         for row in cursor.fetchall():
             for c in row[0].split(","):
@@ -1140,11 +1330,12 @@ def get_contract_types() -> List[str]:
 
 
 def get_working_patterns() -> List[str]:
-    """Get unique list of working patterns."""
+    """Get unique list of working patterns for active jobs."""
+    today_iso = date.today().isoformat()
     with get_db_connection() as conn:
         tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute(f"SELECT DISTINCT working_pattern FROM {tbl} WHERE working_pattern IS NOT NULL AND working_pattern != '' ORDER BY working_pattern ASC")
+        cursor.execute(f"SELECT DISTINCT working_pattern FROM {tbl} WHERE (closing_date_iso IS NULL OR closing_date_iso >= ?) AND working_pattern IS NOT NULL AND working_pattern != '' ORDER BY working_pattern ASC", (today_iso,))
         unique_patterns = set()
         for row in cursor.fetchall():
             for p in row[0].split(","):
@@ -1156,10 +1347,11 @@ def get_working_patterns() -> List[str]:
 
 def get_filter_options() -> Dict:
     """Retrieve all available facet filter options in a single call."""
+    today_iso = date.today().isoformat()
     with get_db_connection() as conn:
         tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute(f"SELECT MIN(salary_min), MAX(salary_max) FROM {tbl} WHERE salary_min > 0")
+        cursor.execute(f"SELECT MIN(salary_min), MAX(salary_max) FROM {tbl} WHERE (closing_date_iso IS NULL OR closing_date_iso >= ?) AND salary_min > 0", (today_iso,))
         min_s, max_s = cursor.fetchone()
         
     return {
@@ -1176,45 +1368,50 @@ def get_filter_options() -> Dict:
 
 
 def get_jobs_missing_details(limit: int = 50) -> List[Dict]:
-    """Return jobs that have not yet had their detail page metadata scraped."""
+    """Return active jobs that have not yet had their detail page metadata scraped."""
+    today_iso = date.today().isoformat()
     with get_db_connection() as conn:
         tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
         cursor.execute(f"""
             SELECT reference_number, job_url, title
             FROM {tbl}
-            WHERE job_grade IS NULL OR role_type IS NULL OR contract_type IS NULL
+            WHERE (closing_date_iso IS NULL OR closing_date_iso >= ?)
+              AND (job_grade IS NULL OR role_type IS NULL OR contract_type IS NULL)
             LIMIT ?
-        """, (limit,))
+        """, (today_iso, limit))
         return [dict(row) for row in cursor.fetchall()]
 
 
 def count_jobs_missing_details() -> int:
-    """Count jobs that do not yet have detail metadata."""
+    """Count active jobs that do not yet have detail metadata."""
+    today_iso = date.today().isoformat()
     with get_db_connection() as conn:
         tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
         cursor.execute(f"""
             SELECT COUNT(*) FROM {tbl}
-            WHERE job_grade IS NULL OR role_type IS NULL OR contract_type IS NULL
-        """)
+            WHERE (closing_date_iso IS NULL OR closing_date_iso >= ?)
+              AND (job_grade IS NULL OR role_type IS NULL OR contract_type IS NULL)
+        """, (today_iso,))
         return cursor.fetchone()[0]
 
 
 def get_dashboard_stats() -> Dict:
-    """Calculate aggregate statistics for dashboard metrics."""
+    """Calculate aggregate statistics for dashboard metrics excluding expired jobs."""
     today_prefix = date.today().isoformat() + "%"
+    today_iso = date.today().isoformat()
     with get_db_connection() as conn:
         tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
         
-        cursor.execute(f"SELECT COUNT(*) FROM {tbl}")
+        cursor.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (closing_date_iso IS NULL OR closing_date_iso >= ?)", (today_iso,))
         total_jobs = cursor.fetchone()[0]
         
-        cursor.execute(f"SELECT COUNT(*) FROM {tbl} WHERE first_seen_at LIKE ?", (today_prefix,))
+        cursor.execute(f"SELECT COUNT(*) FROM {tbl} WHERE (closing_date_iso IS NULL OR closing_date_iso >= ?) AND first_seen_at LIKE ?", (today_iso, today_prefix))
         new_jobs_today = cursor.fetchone()[0]
         
-        cursor.execute(f"SELECT COUNT(DISTINCT department) FROM {tbl} WHERE department IS NOT NULL AND department != ''")
+        cursor.execute(f"SELECT COUNT(DISTINCT department) FROM {tbl} WHERE (closing_date_iso IS NULL OR closing_date_iso >= ?) AND department IS NOT NULL AND department != ''", (today_iso,))
         departments_count = cursor.fetchone()[0]
         
         cursor.execute("SELECT * FROM scrape_logs ORDER BY id DESC LIMIT 1")
