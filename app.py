@@ -720,67 +720,176 @@ def _format_cv_inline(text: str) -> str:
 
 
 def convert_text_to_cv_html(text: str) -> str:
-    """Converts structured text or markdown to clean semantic CV HTML."""
+    """
+    Intelligently converts raw or OCR/PDF extracted CV text into clean, semantic HTML.
+    Eliminates accidental hard word wraps, joins broken sentences into flowing paragraphs,
+    formats headings (h1, h2, h3), standardizes bullet lists (ul/li), and structures contact info.
+    """
     if not text:
         return ""
-    lines = text.split("\n")
-    html_lines = []
-    in_list = False
 
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line:
-            if in_list:
-                html_lines.append("</ul>")
-                in_list = False
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    # Standardize bullet markers: ●, •, ■, ▪, ◦, ○, *, -
+    text = re.sub(r'^[ \t]*[●•■▪◦○\*\-][ \t]*', '● ', text, flags=re.MULTILINE)
+
+    MAIN_HEADINGS = [
+        'SUMMARY', 'PROFESSIONAL SUMMARY', 'PROFILE', 'PERSONAL STATEMENT', 'EXECUTIVE SUMMARY',
+        'EDUCATION', 'ACADEMIC BACKGROUND', 'QUALIFICATIONS', 'EDUCATION & QUALIFICATIONS',
+        'SKILLS', 'TECHNICAL SKILLS', 'KEY SKILLS', 'CORE COMPETENCIES', 'CORE SKILLS', 'TOOLS',
+        'EXPERIENCE', 'WORK EXPERIENCE', 'EMPLOYMENT HISTORY', 'CAREER HISTORY', 'PROFESSIONAL EXPERIENCE',
+        'CIVIL SERVICE BEHAVIOURS', 'BEHAVIOURS', 'PROJECTS', 'KEY ACHIEVEMENTS',
+        'CERTIFICATIONS', 'PUBLICATIONS', 'LANGUAGES', 'INTERESTS', 'REFERENCES'
+    ]
+
+    raw_lines = [l.strip() for l in text.split('\n') if l.strip()]
+    if not raw_lines:
+        return ""
+
+    html_out = []
+    idx = 0
+    total = len(raw_lines)
+
+    # 1. Header: Candidate Name & Contact Details
+    first = raw_lines[0]
+    contact_match = re.search(r'(\+?\d[\d\s\-\(\)]{8,}\d|[\w\.-]+@[\w\.-]+\.\w+)', first)
+    if contact_match:
+        name_part = first[:contact_match.start()].strip(' |-,')
+        contact_part = first[contact_match.start():].strip()
+        if name_part:
+            html_out.append(f'<h1>{html_escape(name_part)}</h1>')
+        if contact_part:
+            html_out.append(f'<p class="cv-contact">{_format_cv_inline(contact_part)}</p>')
+        idx = 1
+    elif total > 1 and ('@' in raw_lines[1] or re.search(r'\+?\d{8,}', raw_lines[1]) or '|' in raw_lines[1]):
+        html_out.append(f'<h1>{html_escape(first)}</h1>')
+        html_out.append(f'<p class="cv-contact">{_format_cv_inline(raw_lines[1])}</p>')
+        idx = 2
+    else:
+        html_out.append(f'<h1>{html_escape(first)}</h1>')
+        idx = 1
+
+    current_block_type = None  # 'p', 'li', 'h2', 'h3', 'h4'
+    current_text_parts = []
+
+    def flush_block():
+        nonlocal current_block_type, current_text_parts
+        if not current_text_parts:
+            return
+
+        joined = ' '.join(current_text_parts)
+        # De-hyphenate broken words like 'front- desk' -> 'front-desk'
+        joined = re.sub(r'(\w+)-\s+(\w+)', r'\1-\2', joined)
+        joined = re.sub(r'\s+([,.:;?!|])', r'\1', joined)
+        joined = re.sub(r'\|\s*\|', '|', joined)
+        joined = re.sub(r'\s+', ' ', joined).strip()
+        if not joined:
+            return
+
+        formatted = _format_cv_inline(joined)
+
+        if current_block_type == 'h2':
+            html_out.append(f'<h2>{formatted}</h2>')
+        elif current_block_type == 'h3':
+            html_out.append(f'<h3>{formatted}</h3>')
+        elif current_block_type == 'h4':
+            html_out.append(f'<h4>{formatted}</h4>')
+        elif current_block_type == 'li':
+            if not html_out or not (html_out[-1].startswith('<li>') or html_out[-1] == '<ul>'):
+                html_out.append('<ul>')
+            html_out.append(f'<li>{formatted}</li>')
+        elif current_block_type == 'p':
+            if html_out and html_out[-1].startswith('<li>'):
+                html_out.append('</ul>')
+            if joined.startswith('(') and joined.endswith(')'):
+                html_out.append(f'<p class="cv-meta"><em>{formatted}</em></p>')
+            else:
+                html_out.append(f'<p>{formatted}</p>')
+
+        current_text_parts = []
+        current_block_type = None
+
+    while idx < total:
+        line = raw_lines[idx]
+
+        # Bullet point marker
+        if line == '●':
+            flush_block()
+            current_block_type = 'li'
+            idx += 1
+            continue
+        elif line.startswith('●'):
+            flush_block()
+            current_block_type = 'li'
+            content = line[1:].strip()
+            if content:
+                current_text_parts.append(content)
+            idx += 1
             continue
 
-        if line.startswith("# "):
-            if in_list:
-                html_lines.append("</ul>")
-                in_list = False
-            html_lines.append(f"<h1>{_format_cv_inline(line[2:])}</h1>")
-        elif line.startswith("## "):
-            if in_list:
-                html_lines.append("</ul>")
-                in_list = False
-            html_lines.append(f"<h2>{_format_cv_inline(line[3:])}</h2>")
-        elif line.startswith("### "):
-            if in_list:
-                html_lines.append("</ul>")
-                in_list = False
-            html_lines.append(f"<h3>{_format_cv_inline(line[4:])}</h3>")
-        elif line.startswith("- ") or line.startswith("* ") or line.startswith("• "):
-            if not in_list:
-                html_lines.append("<ul>")
-                in_list = True
-            html_lines.append(f"<li>{_format_cv_inline(line[2:])}</li>")
-        elif re.match(r'^\d+\.\s+', line):
-            if in_list:
-                html_lines.append("</ul>")
-                in_list = False
-            content = re.sub(r'^\d+\.\s+', '', line)
-            html_lines.append(f"<li>{_format_cv_inline(content)}</li>")
-        elif line.isupper() and len(line) < 60 and not line.endswith("."):
-            if in_list:
-                html_lines.append("</ul>")
-                in_list = False
-            html_lines.append(f"<h2>{_format_cv_inline(line)}</h2>")
-        elif line.endswith(":") and len(line) < 60:
-            if in_list:
-                html_lines.append("</ul>")
-                in_list = False
-            html_lines.append(f"<h3>{_format_cv_inline(line)}</h3>")
-        else:
-            if in_list:
-                html_lines.append("</ul>")
-                in_list = False
-            html_lines.append(f"<p>{_format_cv_inline(line)}</p>")
+        # Check for main CV headings
+        matched_heading = None
+        for mh in MAIN_HEADINGS:
+            if line.upper() == mh:
+                matched_heading = (mh, '')
+                break
+            elif line.upper().startswith(mh + ' ') or line.upper().startswith(mh + ':'):
+                matched_heading = (mh, line[len(mh):].lstrip(': '))
+                break
 
-    if in_list:
-        html_lines.append("</ul>")
+        if matched_heading:
+            flush_block()
+            if html_out and html_out[-1].startswith('<li>'):
+                html_out.append('</ul>')
+            html_out.append(f'<h2>{html_escape(matched_heading[0])}</h2>')
+            rest = matched_heading[1]
+            if rest:
+                current_block_type = 'p'
+                current_text_parts.append(rest)
+            idx += 1
+            continue
 
-    return "\n".join(html_lines)
+        # Check job titles or qualifications with dates and pipes
+        has_dates = bool(re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d|19\d\d|Present|Secondment)', line, re.I))
+        is_title_or_role = ('|' in line and (has_dates or len(line) < 90)) or \
+                           (line.startswith(('Master of', 'Bachelor of', 'BSc', 'MSc', 'MBA', 'BA', 'BEng', 'PhD')) and has_dates)
+
+        if is_title_or_role:
+            flush_block()
+            if html_out and html_out[-1].startswith('<li>'):
+                html_out.append('</ul>')
+            html_out.append(f'<h3>{_format_cv_inline(line)}</h3>')
+            idx += 1
+            continue
+
+        # Check sub-category headers ending with a colon
+        if line.endswith(':') and len(line) < 70:
+            flush_block()
+            if html_out and html_out[-1].startswith('<li>'):
+                html_out.append('</ul>')
+            html_out.append(f'<h4>{_format_cv_inline(line)}</h4>')
+            idx += 1
+            continue
+
+        # Check visa status
+        if line.startswith('(Visa Status') and line.endswith(')'):
+            flush_block()
+            if html_out and html_out[-1].startswith('<li>'):
+                html_out.append('</ul>')
+            html_out.append(f'<p class="cv-meta"><em>{_format_cv_inline(line)}</em></p>')
+            idx += 1
+            continue
+
+        # Continuation of paragraph or bullet
+        if current_block_type is None:
+            current_block_type = 'p'
+        current_text_parts.append(line)
+        idx += 1
+
+    flush_block()
+    if html_out and html_out[-1].startswith('<li>'):
+        html_out.append('</ul>')
+
+    return '\n'.join(html_out)
 
 
 def extract_document_content(content: Any, filename: str) -> Dict[str, Any]:
@@ -804,18 +913,43 @@ def extract_document_content(content: Any, filename: str) -> Dict[str, Any]:
     error = None
 
     if ext == ".pdf":
+        if not raw_bytes.startswith(b"%PDF"):
+            try:
+                raw_full_text = raw_bytes.decode("utf-8")
+            except Exception:
+                raw_full_text = raw_bytes.decode("latin-1", errors="ignore")
+            html_content = convert_text_to_cv_html(raw_full_text)
+            plain_text = re.sub(r'</(h[1-4]|p|li|tr)>', '\n', html_content)
+            plain_text = re.sub(r'<[^>]+>', '', plain_text)
+            plain_text = re.sub(r'\n{3,}', '\n\n', plain_text).strip()
+            return {
+                "text": plain_text or raw_full_text,
+                "html": html_content,
+                "doc_type": "pdf",
+                "file_type": "pdf",
+                "error": None
+            }
         try:
             from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(raw_bytes))
             page_texts = []
-            page_htmls = []
             for i, page in enumerate(reader.pages):
-                t = (page.extract_text() or "").strip()
-                if t:
-                    page_texts.append(t)
-                    page_htmls.append(f"<div class='pdf-page' data-page='{i+1}'>" + convert_text_to_cv_html(t) + "</div>")
-            plain_text = "\n\n".join(page_texts).strip()
-            html_content = "\n<div class='pdf-page-divider'></div>\n".join(page_htmls).strip()
+                try:
+                    t = page.extract_text(extraction_mode="layout")
+                except Exception:
+                    t = None
+                if not t or len(t.strip()) < 15:
+                    t = page.extract_text()
+                if t and t.strip():
+                    page_texts.append(t.strip())
+
+            raw_full_text = "\n\n".join(page_texts).strip()
+            html_content = convert_text_to_cv_html(raw_full_text)
+            plain_text = re.sub(r'</(h[1-4]|p|li|tr)>', '\n', html_content)
+            plain_text = re.sub(r'<[^>]+>', '', plain_text)
+            plain_text = re.sub(r'\n{3,}', '\n\n', plain_text).strip()
+            if not plain_text:
+                plain_text = raw_full_text
         except Exception as e:
             logger.warning(f"pypdf extraction failed for {filename}: {e}")
             error = str(e)

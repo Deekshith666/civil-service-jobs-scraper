@@ -89,6 +89,7 @@
         toolInsertSection: document.getElementById('toolInsertSection'),
         uploadCvFileBtn: document.getElementById('uploadCvFileBtn'),
         cvFileInput: document.getElementById('cvFileInput'),
+        cleanFormatCvBtn: document.getElementById('cleanFormatCvBtn'),
         resetToDefaultCvBtn: document.getElementById('resetToDefaultCvBtn'),
         editorWordCount: document.getElementById('editorWordCount'),
         editorCharCount: document.getElementById('editorCharCount'),
@@ -397,6 +398,179 @@
     // Document Canvas & Formatting
     // ==========================================
 
+    function reconstructCvHtml(text) {
+        if (!text) return '';
+        const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        // Standardize bullet markers
+        const bulletStandardized = normalized.replace(/^[ \t]*[●•■▪◦○\*\-][ \t]*/gm, '● ');
+
+        const MAIN_HEADINGS = [
+            'SUMMARY', 'PROFESSIONAL SUMMARY', 'PROFILE', 'PERSONAL STATEMENT', 'EXECUTIVE SUMMARY',
+            'EDUCATION', 'ACADEMIC BACKGROUND', 'QUALIFICATIONS', 'EDUCATION & QUALIFICATIONS',
+            'SKILLS', 'TECHNICAL SKILLS', 'KEY SKILLS', 'CORE COMPETENCIES', 'CORE SKILLS', 'TOOLS',
+            'EXPERIENCE', 'WORK EXPERIENCE', 'EMPLOYMENT HISTORY', 'CAREER HISTORY', 'PROFESSIONAL EXPERIENCE',
+            'CIVIL SERVICE BEHAVIOURS', 'BEHAVIOURS', 'PROJECTS', 'KEY ACHIEVEMENTS',
+            'CERTIFICATIONS', 'PUBLICATIONS', 'LANGUAGES', 'INTERESTS', 'REFERENCES'
+        ];
+
+        const rawLines = bulletStandardized.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        if (rawLines.length === 0) return '';
+
+        const htmlOut = [];
+        let idx = 0;
+        const total = rawLines.length;
+
+        // 1. Header: Candidate Name & Contact Details
+        const first = rawLines[0];
+        const contactMatch = first.match(/(\+?\d[\d\s\-\(\)]{8,}\d|[\w\.-]+@[\w\.-]+\.\w+)/);
+        if (contactMatch) {
+            const namePart = first.substring(0, contactMatch.index).replace(/[|\-,]+$/, '').trim();
+            const contactPart = first.substring(contactMatch.index).trim();
+            if (namePart) htmlOut.push(`<h1>${escapeHtml(namePart)}</h1>`);
+            if (contactPart) htmlOut.push(`<p class="cv-contact">${escapeHtml(contactPart)}</p>`);
+            idx = 1;
+        } else if (total > 1 && (rawLines[1].includes('@') || /\+?\d{8,}/.test(rawLines[1]) || rawLines[1].includes('|'))) {
+            htmlOut.push(`<h1>${escapeHtml(first)}</h1>`);
+            htmlOut.push(`<p class="cv-contact">${escapeHtml(rawLines[1])}</p>`);
+            idx = 2;
+        } else {
+            htmlOut.push(`<h1>${escapeHtml(first)}</h1>`);
+            idx = 1;
+        }
+
+        let currentBlockType = null;
+        let currentTextParts = [];
+
+        function flushBlock() {
+            if (!currentTextParts || currentTextParts.length === 0) return;
+            let joined = currentTextParts.join(' ');
+            joined = joined.replace(/(\w+)-\s+(\w+)/g, '$1-$2');
+            joined = joined.replace(/\s+([,.:;?!|])/g, '$1');
+            joined = joined.replace(/\|\s*\|/g, '|');
+            joined = joined.replace(/\s+/g, ' ').trim();
+            if (!joined) return;
+
+            const formatted = escapeHtml(joined)
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>');
+
+            if (currentBlockType === 'h2') {
+                htmlOut.push(`<h2>${formatted}</h2>`);
+            } else if (currentBlockType === 'h3') {
+                htmlOut.push(`<h3>${formatted}</h3>`);
+            } else if (currentBlockType === 'h4') {
+                htmlOut.push(`<h4>${formatted}</h4>`);
+            } else if (currentBlockType === 'li') {
+                if (htmlOut.length === 0 || (!htmlOut[htmlOut.length - 1].startsWith('<li>') && htmlOut[htmlOut.length - 1] !== '<ul>')) {
+                    htmlOut.push('<ul>');
+                }
+                htmlOut.push(`<li>${formatted}</li>`);
+            } else {
+                if (htmlOut.length > 0 && htmlOut[htmlOut.length - 1].startsWith('<li>')) {
+                    htmlOut.push('</ul>');
+                }
+                if (joined.startsWith('(') && joined.endsWith(')')) {
+                    htmlOut.push(`<p class="cv-meta"><em>${formatted}</em></p>`);
+                } else {
+                    htmlOut.push(`<p>${formatted}</p>`);
+                }
+            }
+
+            currentTextParts = [];
+            currentBlockType = null;
+        }
+
+        while (idx < total) {
+            const line = rawLines[idx];
+
+            if (line === '●') {
+                flushBlock();
+                currentBlockType = 'li';
+                idx++;
+                continue;
+            } else if (line.startsWith('●')) {
+                flushBlock();
+                currentBlockType = 'li';
+                const content = line.substring(1).trim();
+                if (content) currentTextParts.push(content);
+                idx++;
+                continue;
+            }
+
+            let matchedHeading = null;
+            const upper = line.toUpperCase();
+            for (const mh of MAIN_HEADINGS) {
+                if (upper === mh) {
+                    matchedHeading = [mh, ''];
+                    break;
+                } else if (upper.startsWith(mh + ' ') || upper.startsWith(mh + ':')) {
+                    matchedHeading = [mh, line.substring(mh.length).replace(/^[:\s]+/, '')];
+                    break;
+                }
+            }
+
+            if (matchedHeading) {
+                flushBlock();
+                if (htmlOut.length > 0 && htmlOut[htmlOut.length - 1].startsWith('<li>')) {
+                    htmlOut.push('</ul>');
+                }
+                htmlOut.push(`<h2>${escapeHtml(matchedHeading[0])}</h2>`);
+                const rest = matchedHeading[1];
+                if (rest) {
+                    currentBlockType = 'p';
+                    currentTextParts.push(rest);
+                }
+                idx++;
+                continue;
+            }
+
+            const hasDates = /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|20\d\d|19\d\d|Present|Secondment)/i.test(line);
+            const isTitleOrRole = (line.includes('|') && (hasDates || line.length < 90)) ||
+                (/^(Master of|Bachelor of|BSc|MSc|MBA|BA|BEng|PhD)/i.test(line) && hasDates);
+
+            if (isTitleOrRole) {
+                flushBlock();
+                if (htmlOut.length > 0 && htmlOut[htmlOut.length - 1].startsWith('<li>')) {
+                    htmlOut.push('</ul>');
+                }
+                htmlOut.push(`<h3>${escapeHtml(line)}</h3>`);
+                idx++;
+                continue;
+            }
+
+            if (line.endsWith(':') && line.length < 70) {
+                flushBlock();
+                if (htmlOut.length > 0 && htmlOut[htmlOut.length - 1].startsWith('<li>')) {
+                    htmlOut.push('</ul>');
+                }
+                htmlOut.push(`<h4>${escapeHtml(line)}</h4>`);
+                idx++;
+                continue;
+            }
+
+            if (line.startsWith('(Visa Status') && line.endsWith(')')) {
+                flushBlock();
+                if (htmlOut.length > 0 && htmlOut[htmlOut.length - 1].startsWith('<li>')) {
+                    htmlOut.push('</ul>');
+                }
+                htmlOut.push(`<p class="cv-meta"><em>${escapeHtml(line)}</em></p>`);
+                idx++;
+                continue;
+            }
+
+            if (!currentBlockType) currentBlockType = 'p';
+            currentTextParts.push(line);
+            idx++;
+        }
+
+        flushBlock();
+        if (htmlOut.length > 0 && htmlOut[htmlOut.length - 1].startsWith('<li>')) {
+            htmlOut.push('</ul>');
+        }
+
+        return htmlOut.join('\n');
+    }
+
     function renderCvInCanvas(content, isHtml = false) {
         if (!elements.cvDocumentCanvas) return;
 
@@ -405,17 +579,7 @@
             state.cvText = getCanvasPlainText();
         } else {
             state.cvText = content || '';
-            // Markdown / plain text to semantic HTML
-            let html = escapeHtml(state.cvText);
-            html = html.replace(/^# (.*?)$/gm, '<h1>$1</h1>');
-            html = html.replace(/^## (.*?)$/gm, '<h2>$1</h2>');
-            html = html.replace(/^### (.*?)$/gm, '<h3>$1</h3>');
-            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-            html = html.replace(/^- (.*?)$/gm, '<li>$1</li>');
-            html = html.replace(/(<li>.*?<\/li>)/s, '<ul>$1</ul>');
-            html = html.replace(/\n\n/g, '<p></p>');
-            elements.cvDocumentCanvas.innerHTML = html;
+            elements.cvDocumentCanvas.innerHTML = reconstructCvHtml(state.cvText);
         }
         updateWordAndCharCount();
     }
@@ -1076,6 +1240,23 @@
         // File Upload
         elements.uploadCvFileBtn.addEventListener('click', () => { elements.cvFileInput.click(); });
         elements.cvFileInput.addEventListener('change', handleCvFileUpload);
+
+        // Auto-Fix Spacing & Clean Formatting
+        if (elements.cleanFormatCvBtn) {
+            elements.cleanFormatCvBtn.addEventListener('click', () => {
+                const rawText = getCanvasPlainText();
+                if (!rawText || rawText.trim().length < 10) return;
+                const cleanedHtml = reconstructCvHtml(rawText);
+                renderCvInCanvas(cleanedHtml, true);
+                triggerDebouncedAnalysis();
+                if (elements.editorSyncStatus) {
+                    elements.editorSyncStatus.innerHTML = '<span class="sync-dot" style="background:#10b981;"></span> Spacing & headings auto-fixed!';
+                    setTimeout(() => {
+                        elements.editorSyncStatus.innerHTML = '<span class="sync-dot"></span> Live ATS Sync Active';
+                    }, 2500);
+                }
+            });
+        }
 
         // Reset to Default Template
         elements.resetToDefaultCvBtn.addEventListener('click', async () => {
