@@ -1282,8 +1282,27 @@ async def export_cv_docx(request: ExportDocxRequest):
             headers={"Content-Disposition": f'attachment; filename="{out_filename}"'}
         )
     except Exception as e:
-        logger.error(f"Docx export error: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to export Word document: {str(e)}")
+        logger.warning(f"python-docx unavailable or failed ({e}), falling back to styled Word HTML document")
+        raw_html = request.html or request.cv_html or "<p>Civil Service Tailored CV</p>"
+        doc_html = f"""<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head><meta charset='utf-8'><title>Tailored CV Document</title>
+<style>
+body {{ font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #111; margin: 20pt; }}
+h1 {{ font-size: 18pt; color: #000; text-transform: uppercase; margin-bottom: 2pt; }}
+h2 {{ font-size: 13pt; color: #004f9e; border-bottom: 1.5pt solid #004f9e; margin-top: 14pt; margin-bottom: 6pt; }}
+h3 {{ font-size: 11pt; font-weight: bold; margin-top: 8pt; margin-bottom: 2pt; }}
+ul {{ margin-top: 4pt; margin-bottom: 8pt; }}
+li {{ margin-bottom: 3pt; }}
+</style></head>
+<body>{raw_html}</body></html>"""
+        out_filename = request.filename or "Tailored_Civil_Service_CV.doc"
+        if not (out_filename.endswith(".doc") or out_filename.endswith(".docx")):
+            out_filename += ".doc"
+        return Response(
+            content=doc_html.encode("utf-8"),
+            media_type="application/msword",
+            headers={"Content-Disposition": f'attachment; filename="{out_filename}"'}
+        )
 
 
 @app.get("/api/cv/default-template")
