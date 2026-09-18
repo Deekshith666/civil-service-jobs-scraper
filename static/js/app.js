@@ -41,6 +41,12 @@ const elements = {
     clearSearchBtn: document.getElementById('clearSearchBtn'),
     sortOrderSelect: document.getElementById('sortOrderSelect'),
     onlyNewTodayCheckbox: document.getElementById('onlyNewTodayCheckbox'),
+    newTodayToggleLabel: document.getElementById('newTodayToggleLabel'),
+    newTodayToggleBadge: document.getElementById('newTodayToggleBadge'),
+    quickNewTodayBtn: document.getElementById('quickNewTodayBtn'),
+    quickTodayPill: document.getElementById('quickTodayPill'),
+    cardNewToday: document.getElementById('cardNewToday'),
+    statNewTodaySub: document.getElementById('statNewTodaySub'),
     
     // Sidebar Filter Accordions
     filterLocationInput: document.getElementById('filterLocationInput'),
@@ -231,8 +237,11 @@ async function fetchStats() {
         const res = await fetch('/api/stats');
         const data = await res.json();
         
+        const countToday = (data.new_jobs_today || 0).toLocaleString();
         elements.statTotalJobs.textContent = (data.total_jobs || 0).toLocaleString();
-        elements.statNewToday.textContent = (data.new_jobs_today || 0).toLocaleString();
+        elements.statNewToday.textContent = countToday;
+        if (elements.newTodayToggleBadge) elements.newTodayToggleBadge.textContent = countToday;
+        if (elements.quickTodayPill) elements.quickTodayPill.textContent = countToday;
         elements.statDepartments.textContent = (data.departments_count || 0).toLocaleString();
         
         if (data.last_run) {
@@ -623,10 +632,47 @@ function resetAllFilters() {
     elements.filterContractSelect.value = '';
     if (elements.filterNumJobsSelect) elements.filterNumJobsSelect.value = '';
     elements.onlyNewTodayCheckbox.checked = false;
+    updateNewTodayVisuals(false);
 
     document.querySelectorAll('.chip-sm').forEach(c => c.classList.remove('active'));
 
     fetchJobs();
+}
+
+function toggleNewTodayFilter(forceState = null) {
+    const newState = forceState !== null ? forceState : !state.onlyNewToday;
+    state.onlyNewToday = newState;
+    if (elements.onlyNewTodayCheckbox) {
+        elements.onlyNewTodayCheckbox.checked = newState;
+    }
+    updateNewTodayVisuals(newState);
+    state.page = 1;
+    fetchJobs();
+}
+
+function updateNewTodayVisuals(isActive) {
+    if (elements.cardNewToday) {
+        if (isActive) {
+            elements.cardNewToday.style.borderColor = '#10b981';
+            elements.cardNewToday.style.boxShadow = '0 0 16px rgba(16, 185, 129, 0.35)';
+            if (elements.statNewTodaySub) elements.statNewTodaySub.textContent = 'Active filter • Click to show all';
+        } else {
+            elements.cardNewToday.style.borderColor = '';
+            elements.cardNewToday.style.boxShadow = '';
+            if (elements.statNewTodaySub) elements.statNewTodaySub.textContent = 'Click card to filter today\'s jobs';
+        }
+    }
+    if (elements.quickNewTodayBtn) {
+        if (isActive) {
+            elements.quickNewTodayBtn.style.background = '#10b981';
+            elements.quickNewTodayBtn.style.color = '#ffffff';
+            elements.quickNewTodayBtn.style.borderColor = '#10b981';
+        } else {
+            elements.quickNewTodayBtn.style.background = 'rgba(16, 185, 129, 0.08)';
+            elements.quickNewTodayBtn.style.color = '#10b981';
+            elements.quickNewTodayBtn.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+        }
+    }
 }
 
 // Scraper Trigger & Polling
@@ -861,12 +907,31 @@ function setupEventListeners() {
         fetchJobs();
     });
 
-    // Only New Today toggle
+    // Only New Today toggle & quick filters
     elements.onlyNewTodayCheckbox.addEventListener('change', (e) => {
         state.onlyNewToday = e.target.checked;
+        updateNewTodayVisuals(state.onlyNewToday);
         state.page = 1;
         fetchJobs();
     });
+
+    if (elements.cardNewToday) {
+        elements.cardNewToday.addEventListener('click', () => {
+            toggleNewTodayFilter();
+        });
+    }
+
+    if (elements.quickNewTodayBtn) {
+        elements.quickNewTodayBtn.addEventListener('click', () => {
+            toggleNewTodayFilter();
+        });
+    }
+
+    if (elements.newTodayToggleLabel) {
+        elements.newTodayToggleLabel.addEventListener('click', () => {
+            toggleNewTodayFilter();
+        });
+    }
 
     // Pagination buttons
     elements.prevPageBtn.addEventListener('click', () => {

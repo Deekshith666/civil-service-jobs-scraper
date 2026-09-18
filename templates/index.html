@@ -106,19 +106,22 @@
                 </div>
             </div>
 
-            <div class="metric-card" id="cardNewToday">
+            <div class="metric-card clickable-metric-card" id="cardNewToday" style="cursor: pointer; transition: all 0.2s ease;" title="Click to filter to today's new jobs">
                 <div class="metric-icon-wrap icon-success">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <polyline points="12 6 12 12 14 14"></polyline>
+                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
                     </svg>
                 </div>
                 <div class="metric-info">
-                    <span class="metric-label">New Jobs Today</span>
+                    <span class="metric-label" style="display: flex; align-items: center; gap: 4px;">
+                        <span>⚡ New Today</span>
+                        <span class="pulse-dot" style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #10b981;"></span>
+                    </span>
                     <h2 class="metric-value text-gradient-success" id="statNewToday">--</h2>
-                    <span class="metric-sub">First seen on current date</span>
+                    <span class="metric-sub" id="statNewTodaySub">Click card to filter today's jobs</span>
                 </div>
             </div>
+
 
             <div class="metric-card" id="cardDepartments">
                 <div class="metric-icon-wrap icon-warning">
@@ -386,18 +389,25 @@
                             </select>
                         </div>
 
-                        <div class="toggle-control-group">
+                        <div class="toggle-control-group" title="Toggle today's new vacancies filter">
                             <label class="toggle-switch">
                                 <input type="checkbox" id="onlyNewTodayCheckbox">
                                 <span class="toggle-slider"></span>
                             </label>
-                            <span class="toggle-label">Only New Today</span>
+                            <span class="toggle-label" id="newTodayToggleLabel" style="cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: #10b981;">
+                                <span>⚡ New Today</span>
+                                <span class="badge" id="newTodayToggleBadge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.72rem; padding: 1px 6px; border-radius: 9999px;">0</span>
+                            </span>
                         </div>
                     </div>
 
                     <div class="filter-summary-row">
                         <div class="results-count-text">
                             Showing <strong id="visibleJobsCount">0</strong> of <strong id="totalJobsCount">0</strong> vacancies matching criteria
+                            <button id="quickNewTodayBtn" class="btn btn-sm btn-outline quick-today-btn" title="Quick filter: View vacancies posted today" style="display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; border-color: rgba(16, 185, 129, 0.4); color: #10b981; background: rgba(16, 185, 129, 0.08); font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: all 0.2s ease;">
+                                <span>⚡ New Today</span>
+                                <span class="badge" id="quickTodayPill" style="background: #10b981; color: #ffffff; padding: 1px 6px; border-radius: 10px; font-size: 0.72rem; font-weight: 700;">0</span>
+                            </button>
                             <button id="matchProfileBtn" class="btn btn-sm btn-outline match-profile-btn hidden" title="Filter vacancies according to your saved profile preferences">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path>
@@ -407,6 +417,7 @@
                         </div>
                         <div class="quick-tags" id="quickTags"></div>
                     </div>
+
                 </div>
 
                 <!-- Jobs Listing Grid -->
