@@ -72,6 +72,9 @@
         editorWorkspaceBody: document.getElementById('editorWorkspaceBody'),
         originalPreviewPane: document.getElementById('originalPreviewPane'),
         originalPreviewFrame: document.getElementById('originalPreviewFrame'),
+        originalDocContentView: document.getElementById('originalDocContentView'),
+        originalDocSheet: document.getElementById('originalDocSheet'),
+        swapSplitSidesBtn: document.getElementById('swapSplitSidesBtn'),
         previewDocIcon: document.getElementById('previewDocIcon'),
         previewDocName: document.getElementById('previewDocName'),
         previewOpenTabLink: document.getElementById('previewOpenTabLink'),
@@ -273,7 +276,12 @@
             state.activeResumeRawUrl = data.active_resume_raw_url || '';
 
             applyDocumentTheme(state.activeResumeType, data.active_resume_name || 'Document');
-            setOriginalPreview(state.activeResumeRawUrl, data.active_resume_name || 'Document');
+            setOriginalPreview(
+                state.activeResumeRawUrl,
+                data.active_resume_name || 'Document',
+                data.initial_cv_html || '',
+                data.initial_cv_text || data.default_cv_template || ''
+            );
 
             if (data.initial_cv_html && data.initial_cv_html.trim().length > 30) {
                 renderCvInCanvas(data.initial_cv_html, true);
@@ -355,25 +363,52 @@
         }
     }
 
-    function setOriginalPreview(rawUrl, filename = '') {
+    function setOriginalPreview(rawUrl, filename = '', originalHtml = '', originalText = '') {
         state.activeResumeRawUrl = rawUrl || '';
+        const name = filename || 'Original Uploaded Document';
+        const isPdf = name.toLowerCase().endsWith('.pdf');
+
         if (elements.previewDocName) {
-            elements.previewDocName.textContent = filename || 'Original Uploaded Document';
+            elements.previewDocName.textContent = name;
         }
         if (elements.previewOpenTabLink) {
             elements.previewOpenTabLink.href = rawUrl || '#';
             elements.previewOpenTabLink.style.display = rawUrl ? 'inline-flex' : 'none';
         }
-        if (rawUrl && elements.originalPreviewFrame) {
+
+        // Render formatted document on originalDocSheet
+        if (elements.originalDocSheet) {
+            let htmlToDisplay = originalHtml;
+            if (!htmlToDisplay && originalText) {
+                htmlToDisplay = reconstructCvHtml(originalText);
+            }
+            if (!htmlToDisplay && elements.cvDocumentCanvas) {
+                htmlToDisplay = elements.cvDocumentCanvas.innerHTML;
+            }
+            elements.originalDocSheet.innerHTML = htmlToDisplay || '<p>Original document loaded.</p>';
+            elements.originalDocSheet.className = `doc-paper-sheet ${isPdf ? 'doc-style-pdf' : 'doc-style-word'} readonly-sheet`;
+        }
+
+        // Handle iframe vs formatted sheet
+        if (rawUrl && isPdf && elements.originalPreviewFrame) {
             elements.originalPreviewFrame.src = rawUrl;
             elements.originalPreviewFrame.classList.remove('hidden');
+            if (elements.originalDocContentView) elements.originalDocContentView.classList.add('hidden');
             if (elements.previewFallbackMsg) elements.previewFallbackMsg.classList.add('hidden');
+
+            elements.originalPreviewFrame.onerror = () => {
+                elements.originalPreviewFrame.classList.add('hidden');
+                if (elements.originalDocContentView) elements.originalDocContentView.classList.remove('hidden');
+            };
         } else {
             if (elements.originalPreviewFrame) {
                 elements.originalPreviewFrame.src = 'about:blank';
                 elements.originalPreviewFrame.classList.add('hidden');
             }
-            if (elements.previewFallbackMsg) elements.previewFallbackMsg.classList.remove('hidden');
+            if (elements.originalDocContentView) {
+                elements.originalDocContentView.classList.remove('hidden');
+            }
+            if (elements.previewFallbackMsg) elements.previewFallbackMsg.classList.add('hidden');
         }
     }
 
@@ -386,10 +421,21 @@
         if (elements.viewModeSplit) elements.viewModeSplit.classList.toggle('active', mode === 'split');
         if (elements.viewModePreview) elements.viewModePreview.classList.toggle('active', mode === 'preview');
 
-        // Ensure preview iframe src is loaded if in split or preview mode
-        if ((mode === 'split' || mode === 'preview') && state.activeResumeRawUrl && elements.originalPreviewFrame) {
-            if (!elements.originalPreviewFrame.src || elements.originalPreviewFrame.src.endsWith('blank')) {
-                elements.originalPreviewFrame.src = state.activeResumeRawUrl;
+        // Ensure original preview content is populated
+        if (mode === 'split' || mode === 'preview') {
+            if (elements.originalDocSheet && (!elements.originalDocSheet.innerHTML || elements.originalDocSheet.innerHTML.trim().length < 20)) {
+                if (elements.cvDocumentCanvas) {
+                    elements.originalDocSheet.innerHTML = elements.cvDocumentCanvas.innerHTML;
+                }
+            }
+            // If iframe failed or blank, show originalDocContentView
+            if (elements.originalPreviewFrame && (!elements.originalPreviewFrame.src || elements.originalPreviewFrame.src.endsWith('blank'))) {
+                if (state.activeResumeRawUrl && (state.activeResumeRawUrl.endsWith('.pdf') || state.activeResumeType === 'pdf')) {
+                    elements.originalPreviewFrame.src = state.activeResumeRawUrl;
+                } else if (elements.originalDocContentView) {
+                    elements.originalPreviewFrame.classList.add('hidden');
+                    elements.originalDocContentView.classList.remove('hidden');
+                }
             }
         }
     }
@@ -1027,14 +1073,13 @@
             const data = await res.json();
 
             state.activeResumeType = data.file_type || fileType;
-            if (data.raw_url) {
-                setOriginalPreview(data.raw_url, file.name);
-            }
+            const previewHtml = (data.html && data.html.trim().length > 30) ? data.html : (clientHtml || '');
+            setOriginalPreview(data.raw_url || localBlobUrl, file.name, previewHtml, data.text || '');
 
             // Prefer rich HTML from backend or mammoth
-            if (data.html && data.html.trim().length > 30) {
-                renderCvInCanvas(data.html, true);
-            } else if (!clientHtml) {
+            if (previewHtml) {
+                renderCvInCanvas(previewHtml, true);
+            } else {
                 renderCvInCanvas(data.text || '', false);
             }
 
@@ -1204,6 +1249,13 @@
         if (elements.viewModePreview) {
             elements.viewModePreview.addEventListener('click', () => setViewMode('preview'));
         }
+        if (elements.swapSplitSidesBtn) {
+            elements.swapSplitSidesBtn.addEventListener('click', () => {
+                if (elements.editorWorkspaceBody) {
+                    elements.editorWorkspaceBody.classList.toggle('swap-split-sides');
+                }
+            });
+        }
 
         // Canvas Live Input
         elements.cvDocumentCanvas.addEventListener('input', () => {
@@ -1315,7 +1367,7 @@
                         state.activeResumeId = rData.id;
                         state.activeResumeRawUrl = rData.raw_url || '';
                         applyDocumentTheme(rData.file_type, rData.filename);
-                        setOriginalPreview(rData.raw_url, rData.filename);
+                        setOriginalPreview(rData.raw_url, rData.filename, rData.html || '', rData.text || '');
                         if (rData.html && rData.html.trim().length > 30) {
                             renderCvInCanvas(rData.html, true);
                         } else {

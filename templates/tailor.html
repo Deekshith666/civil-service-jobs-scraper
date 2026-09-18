@@ -189,13 +189,16 @@
             <!-- Multi-Mode Workspace (Edit / Split / Original Preview) -->
             <div class="editor-workspace-body mode-edit" id="editorWorkspaceBody">
                 <!-- Original File Preview Pane (Used in 'preview' and 'split' modes) -->
-                <div class="original-preview-pane hidden" id="originalPreviewPane">
+                <div class="original-preview-pane" id="originalPreviewPane">
                     <div class="preview-pane-header">
                         <div class="preview-pane-title">
                             <span id="previewDocIcon">📄</span>
                             <span id="previewDocName">Original Uploaded Document</span>
                         </div>
                         <div class="preview-pane-actions">
+                            <button type="button" id="swapSplitSidesBtn" class="preview-action-btn" title="Swap sides (put original on left or right)">
+                                <span>⇄ Swap</span>
+                            </button>
                             <a id="previewOpenTabLink" href="#" target="_blank" class="preview-action-btn" title="Open original file in new window">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
                                 <span>Open Full</span>
@@ -203,7 +206,17 @@
                         </div>
                     </div>
                     <div class="preview-pane-content" id="previewPaneContent">
-                        <iframe id="originalPreviewFrame" class="original-preview-frame" title="Original Document Preview"></iframe>
+                        <!-- High-Fidelity Original Formatted Document Sheet -->
+                        <div id="originalDocContentView" class="original-doc-content-view">
+                            <div class="doc-paper-wrapper preview-paper-wrapper">
+                                <div class="doc-paper-shadow">
+                                    <div id="originalDocSheet" class="doc-paper-sheet doc-style-word readonly-sheet">
+                                        <!-- Loaded original document content -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <iframe id="originalPreviewFrame" class="original-preview-frame hidden" title="Original Document Preview"></iframe>
                         <div id="previewFallbackMsg" class="preview-fallback-msg hidden">
                             <p>No preview available for this document format.</p>
                         </div>
