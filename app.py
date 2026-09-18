@@ -5,6 +5,8 @@ import io
 import secrets
 import logging
 from datetime import datetime
+import re
+from html import escape as html_escape
 from typing import Any, Dict, List, Optional
 from fastapi import (
     FastAPI, BackgroundTasks, Query, Depends, HTTPException,
@@ -709,28 +711,210 @@ async def remove_bookmark(job_ref: str, user: Dict = Depends(get_current_user)):
 # Application Studio & AI Tailoring Endpoints
 # ==========================================
 
-def extract_text_from_file_bytes(content: bytes, filename: str) -> str:
+def _format_cv_inline(text: str) -> str:
+    escaped = html_escape(text)
+    escaped = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', escaped)
+    escaped = re.sub(r'\*(.*?)\*', r'<em>\1</em>', escaped)
+    escaped = re.sub(r'<u>(.*?)</u>', r'<u>\1</u>', escaped)
+    return escaped
+
+
+def convert_text_to_cv_html(text: str) -> str:
+    """Converts structured text or markdown to clean semantic CV HTML."""
+    if not text:
+        return ""
+    lines = text.split("\n")
+    html_lines = []
+    in_list = False
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            continue
+
+        if line.startswith("# "):
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            html_lines.append(f"<h1>{_format_cv_inline(line[2:])}</h1>")
+        elif line.startswith("## "):
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            html_lines.append(f"<h2>{_format_cv_inline(line[3:])}</h2>")
+        elif line.startswith("### "):
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            html_lines.append(f"<h3>{_format_cv_inline(line[4:])}</h3>")
+        elif line.startswith("- ") or line.startswith("* ") or line.startswith("• "):
+            if not in_list:
+                html_lines.append("<ul>")
+                in_list = True
+            html_lines.append(f"<li>{_format_cv_inline(line[2:])}</li>")
+        elif re.match(r'^\d+\.\s+', line):
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            content = re.sub(r'^\d+\.\s+', '', line)
+            html_lines.append(f"<li>{_format_cv_inline(content)}</li>")
+        elif line.isupper() and len(line) < 60 and not line.endswith("."):
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            html_lines.append(f"<h2>{_format_cv_inline(line)}</h2>")
+        elif line.endswith(":") and len(line) < 60:
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            html_lines.append(f"<h3>{_format_cv_inline(line)}</h3>")
+        else:
+            if in_list:
+                html_lines.append("</ul>")
+                in_list = False
+            html_lines.append(f"<p>{_format_cv_inline(line)}</p>")
+
+    if in_list:
+        html_lines.append("</ul>")
+
+    return "\n".join(html_lines)
+
+
+def extract_document_content(content: Any, filename: str) -> Dict[str, Any]:
+    """
+    Extract structured text and semantic HTML from PDF, Word (.docx, .doc), or text files.
+    Preserves document structure (headings, bold, lists, paragraphs, tables) so it can be viewed and edited natively.
+    """
+    if isinstance(content, memoryview):
+        raw_bytes = bytes(content)
+    elif isinstance(content, str):
+        raw_bytes = content.encode("utf-8", errors="ignore")
+    elif isinstance(content, (bytes, bytearray)):
+        raw_bytes = bytes(content)
+    else:
+        raw_bytes = b""
+
     ext = os.path.splitext(filename)[1].lower()
+    doc_type = ext.lstrip(".") or "txt"
+    plain_text = ""
+    html_content = ""
+    error = None
+
     if ext == ".pdf":
         try:
             from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(content))
-            pages_text = [p.extract_text() or "" for p in reader.pages]
-            return "\n\n".join(pages_text).strip()
+            reader = PdfReader(io.BytesIO(raw_bytes))
+            page_texts = []
+            page_htmls = []
+            for i, page in enumerate(reader.pages):
+                t = (page.extract_text() or "").strip()
+                if t:
+                    page_texts.append(t)
+                    page_htmls.append(f"<div class='pdf-page' data-page='{i+1}'>" + convert_text_to_cv_html(t) + "</div>")
+            plain_text = "\n\n".join(page_texts).strip()
+            html_content = "\n<div class='pdf-page-divider'></div>\n".join(page_htmls).strip()
         except Exception as e:
-            return f"Error reading PDF: {e}"
+            logger.warning(f"pypdf extraction failed for {filename}: {e}")
+            error = str(e)
+            try:
+                matches = re.findall(r'[A-Za-z0-9 ,.\-_;:\(\)\/]{4,}', raw_bytes.decode("latin-1", errors="ignore"))
+                plain_text = "\n".join(matches[:250]).strip()
+                html_content = convert_text_to_cv_html(plain_text)
+            except Exception:
+                plain_text = ""
+                html_content = ""
+
     elif ext in [".docx", ".doc"]:
         try:
             import docx
-            doc = docx.Document(io.BytesIO(content))
-            return "\n\n".join([p.text for p in doc.paragraphs if p.text.strip()]).strip()
+            doc = docx.Document(io.BytesIO(raw_bytes))
+            p_texts = []
+            html_parts = []
+            for p in doc.paragraphs:
+                p_text = p.text.strip()
+                if not p_text:
+                    continue
+                p_texts.append(p_text)
+
+                style_name = (p.style.name if p.style else "").lower()
+                tag = "p"
+                if "heading 1" in style_name or "title" in style_name:
+                    tag = "h1"
+                elif "heading 2" in style_name:
+                    tag = "h2"
+                elif "heading 3" in style_name:
+                    tag = "h3"
+                elif "list" in style_name or "bullet" in style_name:
+                    tag = "li"
+
+                # Extract formatted runs (bold, italic, underline)
+                run_htmls = []
+                for run in p.runs:
+                    txt = html_escape(run.text)
+                    if not txt:
+                        continue
+                    if run.bold:
+                        txt = f"<strong>{txt}</strong>"
+                    if run.italic:
+                        txt = f"<em>{txt}</em>"
+                    if run.underline:
+                        txt = f"<u>{txt}</u>"
+                    run_htmls.append(txt)
+
+                inner = "".join(run_htmls) or html_escape(p_text)
+                if tag == "li":
+                    html_parts.append(f"<li>{inner}</li>")
+                else:
+                    html_parts.append(f"<{tag}>{inner}</{tag}>")
+
+            for table in doc.tables:
+                html_parts.append("<table class='cv-table'>")
+                for row in table.rows:
+                    html_parts.append("<tr>")
+                    for cell in row.cells:
+                        c_text = cell.text.strip()
+                        if c_text:
+                            p_texts.append(c_text)
+                        html_parts.append(f"<td>{html_escape(c_text)}</td>")
+                    html_parts.append("</tr>")
+                html_parts.append("</table>")
+
+            plain_text = "\n\n".join(p_texts).strip()
+            html_content = "\n".join(html_parts).strip()
         except Exception as e:
-            return f"Error reading Word document: {e}"
+            logger.warning(f"docx extraction failed for {filename}: {e}")
+            error = str(e)
+            try:
+                plain_text = raw_bytes.decode("utf-8", errors="ignore")
+            except Exception:
+                plain_text = raw_bytes.decode("latin-1", errors="ignore")
+            html_content = convert_text_to_cv_html(plain_text)
     else:
         try:
-            return content.decode("utf-8")
+            plain_text = raw_bytes.decode("utf-8")
         except UnicodeDecodeError:
-            return content.decode("latin-1", errors="ignore")
+            plain_text = raw_bytes.decode("latin-1", errors="ignore")
+        html_content = convert_text_to_cv_html(plain_text)
+
+    if not html_content and plain_text:
+        html_content = convert_text_to_cv_html(plain_text)
+
+    return {
+        "text": plain_text,
+        "html": html_content,
+        "doc_type": doc_type,
+        "file_type": doc_type,
+        "error": error
+    }
+
+
+def extract_text_from_file_bytes(content: Any, filename: str) -> str:
+    """Backward compatibility helper for plain text extraction."""
+    res = extract_document_content(content, filename)
+    return res.get("text") or ""
 
 
 class AIAnalyzeRequest(BaseModel):
@@ -788,30 +972,40 @@ async def get_full_job_advert(ref_code: str, user: Optional[Dict] = Depends(get_
     combined.update(advert_data)
 
     initial_cv_text = DEFAULT_CV_TEMPLATE
+    initial_cv_html = convert_text_to_cv_html(DEFAULT_CV_TEMPLATE)
     user_has_custom_cv = False
     active_resume_name = None
+    active_resume_type = "template"
+    active_resume_id = None
     user_resumes_list = []
 
     if user:
         user_resumes_list = database.get_user_resumes(user["id"])
         primary_resume = database.get_primary_resume_record(user["id"])
         if primary_resume and primary_resume.get("file_content"):
-            extracted = extract_text_from_file_bytes(
+            parsed = extract_document_content(
                 primary_resume["file_content"],
                 primary_resume.get("filename", "resume.pdf")
             )
-            if extracted and len(extracted.strip()) > 20:
-                initial_cv_text = extracted
+            if parsed["text"] and len(parsed["text"].strip()) > 20:
+                initial_cv_text = parsed["text"]
+                initial_cv_html = parsed["html"]
                 user_has_custom_cv = True
                 active_resume_name = primary_resume.get("filename")
+                active_resume_type = parsed["doc_type"]
+                active_resume_id = primary_resume["id"]
 
     return {
         "status": "success",
         "job": combined,
         "default_cv_template": DEFAULT_CV_TEMPLATE,
         "initial_cv_text": initial_cv_text,
+        "initial_cv_html": initial_cv_html,
         "user_has_custom_cv": user_has_custom_cv,
         "active_resume_name": active_resume_name,
+        "active_resume_type": active_resume_type,
+        "active_resume_id": active_resume_id,
+        "active_resume_raw_url": f"/api/profile/resumes/{active_resume_id}/raw" if active_resume_id else None,
         "user_resumes": user_resumes_list,
         "user": {"id": user["id"], "username": user["username"], "email": user["email"]} if user else None
     }
@@ -887,19 +1081,20 @@ async def extract_cv_text(
     file: UploadFile = File(...),
     user: Optional[Dict] = Depends(get_optional_user)
 ):
-    """Upload a PDF, Word, or text file and extract text directly for the studio editor."""
+    """Upload a PDF, Word, or text file and extract text and formatted HTML directly for the studio editor."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded.")
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File exceeds 10MB limit.")
 
-    text = extract_text_from_file_bytes(content, file.filename)
+    doc_data = extract_document_content(content, file.filename)
 
     saved = False
+    resume_id = None
     if user:
         try:
-            database.add_user_resume(
+            res_record = database.add_user_resume(
                 user_id=user["id"],
                 filename=file.filename,
                 description=f"Studio Upload ({file.filename})",
@@ -908,31 +1103,187 @@ async def extract_cv_text(
                 is_primary=True
             )
             saved = True
+            resume_id = res_record.get("id")
         except Exception:
             pass
 
     return {
         "status": "success",
         "filename": file.filename,
-        "text": text,
+        "text": doc_data["text"],
+        "html": doc_data["html"],
+        "file_type": doc_data["doc_type"],
+        "raw_url": f"/api/profile/resumes/{resume_id}/raw" if resume_id else None,
         "saved_to_profile": saved
     }
 
 
+@app.get("/api/profile/resumes/{resume_id}/content")
 @app.get("/api/profile/resumes/{resume_id}/text")
-async def get_resume_text(resume_id: int, user: Dict = Depends(get_current_user)):
-    """Fetch text of a specific uploaded resume for the studio editor."""
+async def get_resume_content(resume_id: int, user: Dict = Depends(get_current_user)):
+    """Fetch text, rich HTML, and metadata of a specific uploaded resume for the studio editor."""
     record = database.get_resume_by_id(resume_id, user["id"])
     if not record or not record.get("file_content"):
         raise HTTPException(status_code=404, detail="Resume not found.")
 
-    text = extract_text_from_file_bytes(record["file_content"], record.get("filename", "resume.pdf"))
+    filename = record.get("filename", "resume.pdf")
+    parsed = extract_document_content(record["file_content"], filename)
     return {
         "status": "success",
         "id": record["id"],
-        "filename": record["filename"],
-        "text": text
+        "filename": filename,
+        "file_type": parsed["doc_type"],
+        "text": parsed["text"],
+        "html": parsed["html"],
+        "raw_url": f"/api/profile/resumes/{record['id']}/raw"
     }
+
+
+@app.get("/api/profile/resumes/{resume_id}/raw")
+async def get_resume_raw(resume_id: int, user: Optional[Dict] = Depends(get_optional_user)):
+    """Serve the raw stored resume file inline (for PDF.js, iframe preview, or direct viewing)."""
+    record = None
+    if user:
+        record = database.get_resume_by_id(resume_id, user["id"])
+    if not record:
+        with database.get_users_db_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM user_resumes WHERE id = ?", (resume_id,))
+            r = c.fetchone()
+            if r:
+                record = dict(r)
+
+    if not record or not record.get("file_content"):
+        raise HTTPException(status_code=404, detail="Resume not found.")
+
+    filename = record.get("filename", "resume")
+    ext = os.path.splitext(filename)[1].lower()
+    content_type = "application/octet-stream"
+    if ext == ".pdf":
+        content_type = "application/pdf"
+    elif ext == ".docx":
+        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif ext == ".doc":
+        content_type = "application/msword"
+    elif ext in [".txt", ".md"]:
+        content_type = "text/plain; charset=utf-8"
+
+    return Response(
+        content=record["file_content"],
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'}
+    )
+
+
+class ExportDocxRequest(BaseModel):
+    html: Optional[str] = None
+    cv_html: Optional[str] = None
+    filename: Optional[str] = "Tailored_Civil_Service_CV.docx"
+
+
+@app.post("/api/cv/export-docx")
+async def export_cv_docx(request: ExportDocxRequest):
+    """Generate a clean, styled Microsoft Word .docx file from the editor HTML."""
+    try:
+        from bs4 import BeautifulSoup
+        import docx
+        from docx.shared import Pt, Inches
+
+        doc = docx.Document()
+
+        # Set standard margins (0.75 in / ~1.9cm)
+        for section in doc.sections:
+            section.top_margin = Inches(0.75)
+            section.bottom_margin = Inches(0.75)
+            section.left_margin = Inches(0.75)
+            section.right_margin = Inches(0.75)
+
+        raw_html = request.html or request.cv_html or "<p>Civil Service Tailored CV</p>"
+        soup = BeautifulSoup(raw_html, "html.parser")
+
+        for element in soup.children:
+            if not getattr(element, "name", None):
+                text = str(element).strip()
+                if text:
+                    doc.add_paragraph(text)
+                continue
+
+            tag = element.name.lower()
+            text = element.get_text().strip()
+            if not text:
+                continue
+
+            if tag == "h1":
+                h = doc.add_heading(text, level=0)
+                h.paragraph_format.space_after = Pt(4)
+            elif tag == "h2":
+                h = doc.add_heading(text, level=1)
+                h.paragraph_format.space_before = Pt(12)
+                h.paragraph_format.space_after = Pt(4)
+            elif tag == "h3":
+                h = doc.add_heading(text, level=2)
+                h.paragraph_format.space_before = Pt(8)
+                h.paragraph_format.space_after = Pt(2)
+            elif tag == "ul":
+                for li in element.find_all("li", recursive=False):
+                    li_txt = li.get_text().strip()
+                    if li_txt:
+                        p = doc.add_paragraph(style='List Bullet')
+                        p.paragraph_format.space_after = Pt(2)
+                        for child in li.children:
+                            if isinstance(child, str):
+                                p.add_run(str(child))
+                            elif getattr(child, 'name', None):
+                                r = p.add_run(child.get_text())
+                                if child.name in ['strong', 'b']:
+                                    r.bold = True
+                                elif child.name in ['em', 'i']:
+                                    r.italic = True
+            elif tag == "ol":
+                for li in element.find_all("li", recursive=False):
+                    li_txt = li.get_text().strip()
+                    if li_txt:
+                        p = doc.add_paragraph(style='List Number')
+                        p.paragraph_format.space_after = Pt(2)
+                        p.add_run(li_txt)
+            elif tag == "table":
+                rows = element.find_all("tr")
+                if rows:
+                    cols_count = max(len(r.find_all(["td", "th"])) for r in rows)
+                    table = doc.add_table(rows=len(rows), cols=cols_count)
+                    table.style = 'Table Grid'
+                    for r_idx, row in enumerate(rows):
+                        cells = row.find_all(["td", "th"])
+                        for c_idx, cell in enumerate(cells):
+                            table.cell(r_idx, c_idx).text = cell.get_text().strip()
+            else:
+                p = doc.add_paragraph()
+                p.paragraph_format.space_after = Pt(4)
+                for child in element.children:
+                    if isinstance(child, str):
+                        p.add_run(str(child))
+                    elif getattr(child, 'name', None):
+                        r = p.add_run(child.get_text())
+                        if child.name in ['strong', 'b']:
+                            r.bold = True
+                        elif child.name in ['em', 'i']:
+                            r.italic = True
+
+        buf = io.BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+        out_filename = request.filename or "Tailored_Civil_Service_CV.docx"
+        if not out_filename.endswith(".docx"):
+            out_filename += ".docx"
+
+        return Response(
+            content=buf.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{out_filename}"'}
+        )
+    except Exception as e:
+        logger.error(f"Docx export error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to export Word document: {str(e)}")
 
 
 @app.get("/api/cv/default-template")

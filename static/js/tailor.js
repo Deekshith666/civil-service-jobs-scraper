@@ -18,6 +18,10 @@
         jobRef: '',
         jobData: null,
         cvText: '',
+        activeResumeType: 'docx',
+        activeResumeId: null,
+        activeResumeRawUrl: '',
+        viewMode: 'edit',
         analysis: null,
         activeTab: 'keywordsTab',
         activeFilter: 'all',
@@ -60,14 +64,29 @@
         exportDocxBtn: document.getElementById('exportDocxBtn'),
         copyCvTextBtn: document.getElementById('copyCvTextBtn'),
 
+        // 3-Mode View Switcher & Preview Elements
+        viewModeTabs: document.getElementById('viewModeTabs'),
+        viewModeEdit: document.getElementById('viewModeEdit'),
+        viewModeSplit: document.getElementById('viewModeSplit'),
+        viewModePreview: document.getElementById('viewModePreview'),
+        editorWorkspaceBody: document.getElementById('editorWorkspaceBody'),
+        originalPreviewPane: document.getElementById('originalPreviewPane'),
+        originalPreviewFrame: document.getElementById('originalPreviewFrame'),
+        previewDocIcon: document.getElementById('previewDocIcon'),
+        previewDocName: document.getElementById('previewDocName'),
+        previewOpenTabLink: document.getElementById('previewOpenTabLink'),
+        previewFallbackMsg: document.getElementById('previewFallbackMsg'),
+
         // Doc Editor Canvas & Tools
         cvDocumentCanvas: document.getElementById('cvDocumentCanvas'),
         docTypeBadge: document.getElementById('docTypeBadge'),
+        toolFormatBlock: document.getElementById('toolFormatBlock'),
         toolBold: document.getElementById('toolBold'),
         toolItalic: document.getElementById('toolItalic'),
-        toolH2: document.getElementById('toolH2'),
-        toolH3: document.getElementById('toolH3'),
+        toolUnderline: document.getElementById('toolUnderline'),
         toolBullet: document.getElementById('toolBullet'),
+        toolNumbered: document.getElementById('toolNumbered'),
+        toolInsertSection: document.getElementById('toolInsertSection'),
         uploadCvFileBtn: document.getElementById('uploadCvFileBtn'),
         cvFileInput: document.getElementById('cvFileInput'),
         resetToDefaultCvBtn: document.getElementById('resetToDefaultCvBtn'),
@@ -248,11 +267,18 @@
             }
 
             // Populate Document Canvas with User's Uploaded CV!
-            const initialCv = data.initial_cv_text || data.default_cv_template;
-            elements.docTypeBadge.textContent = data.user_has_custom_cv 
-                ? (data.active_resume_name || 'Your Uploaded CV') 
-                : 'Civil Service Template';
-            renderCvInCanvas(initialCv);
+            state.activeResumeType = data.active_resume_type || 'docx';
+            state.activeResumeId = data.active_resume_id || null;
+            state.activeResumeRawUrl = data.active_resume_raw_url || '';
+
+            applyDocumentTheme(state.activeResumeType, data.active_resume_name || 'Document');
+            setOriginalPreview(state.activeResumeRawUrl, data.active_resume_name || 'Document');
+
+            if (data.initial_cv_html && data.initial_cv_html.trim().length > 30) {
+                renderCvInCanvas(data.initial_cv_html, true);
+            } else {
+                renderCvInCanvas(data.initial_cv_text || data.default_cv_template, false);
+            }
 
             // Run initial ATS analysis
             await analyzeCvContent();
@@ -302,31 +328,95 @@
     }
 
     // ==========================================
+    // Document Theme & Preview Handlers
+    // ==========================================
+
+    function applyDocumentTheme(fileType, filename = '') {
+        const type = (fileType || '').toLowerCase();
+        const canvas = elements.cvDocumentCanvas;
+        if (!canvas) return;
+
+        if (type.includes('doc')) {
+            canvas.classList.add('doc-style-word');
+            canvas.classList.remove('doc-style-pdf');
+            elements.docTypeBadge.textContent = filename ? `${filename}` : 'Word Document (.docx)';
+            if (elements.previewDocIcon) elements.previewDocIcon.textContent = '📝';
+        } else if (type.includes('pdf')) {
+            canvas.classList.add('doc-style-pdf');
+            canvas.classList.remove('doc-style-word');
+            elements.docTypeBadge.textContent = filename ? `${filename}` : 'PDF Document (.pdf)';
+            if (elements.previewDocIcon) elements.previewDocIcon.textContent = '📄';
+        } else {
+            canvas.classList.add('doc-style-word');
+            canvas.classList.remove('doc-style-pdf');
+            elements.docTypeBadge.textContent = filename || 'Civil Service CV';
+            if (elements.previewDocIcon) elements.previewDocIcon.textContent = '📋';
+        }
+    }
+
+    function setOriginalPreview(rawUrl, filename = '') {
+        state.activeResumeRawUrl = rawUrl || '';
+        if (elements.previewDocName) {
+            elements.previewDocName.textContent = filename || 'Original Uploaded Document';
+        }
+        if (elements.previewOpenTabLink) {
+            elements.previewOpenTabLink.href = rawUrl || '#';
+            elements.previewOpenTabLink.style.display = rawUrl ? 'inline-flex' : 'none';
+        }
+        if (rawUrl && elements.originalPreviewFrame) {
+            elements.originalPreviewFrame.src = rawUrl;
+            elements.originalPreviewFrame.classList.remove('hidden');
+            if (elements.previewFallbackMsg) elements.previewFallbackMsg.classList.add('hidden');
+        } else {
+            if (elements.originalPreviewFrame) {
+                elements.originalPreviewFrame.src = 'about:blank';
+                elements.originalPreviewFrame.classList.add('hidden');
+            }
+            if (elements.previewFallbackMsg) elements.previewFallbackMsg.classList.remove('hidden');
+        }
+    }
+
+    function setViewMode(mode) {
+        state.viewMode = mode;
+        if (elements.editorWorkspaceBody) {
+            elements.editorWorkspaceBody.className = `editor-workspace-body mode-${mode}`;
+        }
+        if (elements.viewModeEdit) elements.viewModeEdit.classList.toggle('active', mode === 'edit');
+        if (elements.viewModeSplit) elements.viewModeSplit.classList.toggle('active', mode === 'split');
+        if (elements.viewModePreview) elements.viewModePreview.classList.toggle('active', mode === 'preview');
+
+        // Ensure preview iframe src is loaded if in split or preview mode
+        if ((mode === 'split' || mode === 'preview') && state.activeResumeRawUrl && elements.originalPreviewFrame) {
+            if (!elements.originalPreviewFrame.src || elements.originalPreviewFrame.src.endsWith('blank')) {
+                elements.originalPreviewFrame.src = state.activeResumeRawUrl;
+            }
+        }
+    }
+
+    // ==========================================
     // Document Canvas & Formatting
     // ==========================================
 
-    function renderCvInCanvas(markdownText) {
-        state.cvText = markdownText;
-        // Simple Markdown to semantic HTML converter for realistic doc viewing
-        let html = escapeHtml(markdownText);
+    function renderCvInCanvas(content, isHtml = false) {
+        if (!elements.cvDocumentCanvas) return;
 
-        // H1
-        html = html.replace(/^# (.*?)$/gm, '<h1>$1</h1>');
-        // H2
-        html = html.replace(/^## (.*?)$/gm, '<h2>$1</h2>');
-        // H3
-        html = html.replace(/^### (.*?)$/gm, '<h3>$1</h3>');
-        // Bold
-        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-        // Italic
-        html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-        // Bullets
-        html = html.replace(/^- (.*?)$/gm, '<li>$1</li>');
-        html = html.replace(/(<li>.*?<\/li>)/s, '<ul>$1</ul>');
-        // Clean linebreaks
-        html = html.replace(/\n\n/g, '<p></p>');
-
-        elements.cvDocumentCanvas.innerHTML = html;
+        if (isHtml) {
+            elements.cvDocumentCanvas.innerHTML = content;
+            state.cvText = getCanvasPlainText();
+        } else {
+            state.cvText = content || '';
+            // Markdown / plain text to semantic HTML
+            let html = escapeHtml(state.cvText);
+            html = html.replace(/^# (.*?)$/gm, '<h1>$1</h1>');
+            html = html.replace(/^## (.*?)$/gm, '<h2>$1</h2>');
+            html = html.replace(/^### (.*?)$/gm, '<h3>$1</h3>');
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+            html = html.replace(/^- (.*?)$/gm, '<li>$1</li>');
+            html = html.replace(/(<li>.*?<\/li>)/s, '<ul>$1</ul>');
+            html = html.replace(/\n\n/g, '<p></p>');
+            elements.cvDocumentCanvas.innerHTML = html;
+        }
         updateWordAndCharCount();
     }
 
@@ -730,10 +820,34 @@
         const file = e.target.files[0];
         if (!file) return;
 
+        const isDocx = file.name.endsWith('.docx');
+        const isPdf = file.name.endsWith('.pdf');
+        const fileType = isDocx ? 'docx' : (isPdf ? 'pdf' : 'doc');
+
+        applyDocumentTheme(fileType, file.name);
+        elements.docTypeBadge.textContent = `Extracting ${file.name}...`;
+
+        // Create local preview blob URL immediately so split view works without waiting
+        const localBlobUrl = URL.createObjectURL(file);
+        setOriginalPreview(localBlobUrl, file.name);
+
+        // Client-side quick conversion for DOCX with Mammoth if available
+        let clientHtml = null;
+        if (isDocx && window.mammoth) {
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const result = await window.mammoth.convertToHtml({ arrayBuffer: arrayBuffer });
+                if (result && result.value && result.value.trim().length > 30) {
+                    clientHtml = result.value;
+                    renderCvInCanvas(clientHtml, true);
+                }
+            } catch (mErr) {
+                console.warn('Client mammoth conversion note:', mErr);
+            }
+        }
+
         const formData = new FormData();
         formData.append('file', file);
-
-        elements.docTypeBadge.textContent = 'Extracting...';
 
         try {
             const token = localStorage.getItem('civil_auth_token');
@@ -748,14 +862,67 @@
             if (!res.ok) throw new Error('Failed to extract text from document');
             const data = await res.json();
 
-            renderCvInCanvas(data.text);
+            state.activeResumeType = data.file_type || fileType;
+            if (data.raw_url) {
+                setOriginalPreview(data.raw_url, file.name);
+            }
+
+            // Prefer rich HTML from backend or mammoth
+            if (data.html && data.html.trim().length > 30) {
+                renderCvInCanvas(data.html, true);
+            } else if (!clientHtml) {
+                renderCvInCanvas(data.text || '', false);
+            }
+
             elements.docTypeBadge.textContent = file.name;
             await analyzeCvContent();
 
         } catch (err) {
+            console.error('File reading error:', err);
             alert(`File reading error: ${err.message}`);
-            elements.docTypeBadge.textContent = 'Civil Service Template';
+            if (!clientHtml) {
+                elements.docTypeBadge.textContent = 'Civil Service Template';
+            }
         }
+    }
+
+    function insertSectionTemplate(type) {
+        const templates = {
+            summary: `<h2>Professional Summary</h2><p>Experienced professional with a proven track record in delivering high-impact initiatives across government and private sector environments, aligned with Civil Service standards.</p>`,
+            skills: `<h2>Core Competencies & Technical Skills</h2><ul><li><strong>Cloud & Infrastructure:</strong> CI/CD pipelines, Docker, Kubernetes, AWS/Azure, automated deployments.</li><li><strong>Agile Delivery:</strong> Scrum, Kanban, cross-functional collaboration, stakeholder management.</li><li><strong>Governance & Security:</strong> Adherence to GDS Service Standards, ISO 27001, data protection.</li></ul>`,
+            experience: `<h2>Employment History</h2><h3>Senior Practitioner | Department / Organization Name</h3><p><em>Month Year – Present | London, UK (Hybrid)</em></p><ul><li>Spearheaded critical digital transformation project, improving system reliability by 35%.</li><li>Collaborated with multi-disciplinary squads to deliver user-centred government services.</li><li>Mentored junior team members and championed continuous integration best practices.</li></ul>`,
+            behaviours: `<h2>Civil Service Behaviours</h2><h3>Delivering at Pace</h3><p>Successfully managed tight delivery schedules under pressure, prioritising critical deliverables and ensuring full alignment with Service Assessments.</p><h3>Making Effective Decisions</h3><p>Analysed complex technical trade-offs and operational risks to guide architecture selection, reducing downtime and saving £50,000 annually.</p>`,
+            education: `<h2>Education & Professional Qualifications</h2><h3>BSc (Hons) in Relevant Discipline</h3><p><em>University Name | Graduated with First Class Honours</em></p><ul><li>Relevant Coursework: Distributed Systems, Software Engineering, Agile Methodologies.</li><li>Certifications: AWS Certified Solutions Architect, Agile Project Management (AgilePM).</li></ul>`
+        };
+
+        const html = templates[type];
+        if (!html) return;
+
+        elements.cvDocumentCanvas.focus();
+        // Try inserting at cursor position
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+            const range = sel.getRangeAt(0);
+            if (elements.cvDocumentCanvas.contains(range.commonAncestorContainer)) {
+                range.deleteContents();
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = html;
+                const frag = document.createDocumentFragment();
+                let node;
+                while ((node = tempDiv.firstChild)) {
+                    frag.appendChild(node);
+                }
+                range.insertNode(frag);
+                updateWordAndCharCount();
+                triggerDebouncedAnalysis();
+                return;
+            }
+        }
+
+        // Otherwise append to bottom
+        elements.cvDocumentCanvas.innerHTML += `<br>${html}`;
+        updateWordAndCharCount();
+        triggerDebouncedAnalysis();
     }
 
     // ==========================================
@@ -764,12 +931,60 @@
 
     function exportAsPdf() {
         elements.exportMenu.classList.add('hidden');
-        window.print();
+        const element = elements.cvDocumentCanvas;
+        if (window.html2pdf) {
+            const opt = {
+                margin: [10, 10, 10, 10],
+                filename: `Tailored_CV_${state.jobRef || 'Application'}.pdf`,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+            window.html2pdf().set(opt).from(element).save();
+        } else {
+            window.print();
+        }
     }
 
-    function exportAsDocx() {
+    async function exportAsDocx() {
         elements.exportMenu.classList.add('hidden');
-        const content = elements.cvDocumentCanvas.innerHTML;
+        const html = elements.cvDocumentCanvas.innerHTML;
+        const originalText = elements.exportDocxBtn.innerHTML;
+        elements.exportDocxBtn.innerHTML = `<span>⏳ Generating Word .docx...</span>`;
+
+        try {
+            const token = localStorage.getItem('civil_auth_token');
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+
+            const res = await fetch('/api/cv/export-docx', {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify({
+                    html: html,
+                    filename: `Tailored_CV_${state.jobRef || 'Application'}.docx`
+                })
+            });
+
+            if (!res.ok) throw new Error(`DOCX export server error (${res.status})`);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Tailored_CV_${state.jobRef || 'Application'}.docx`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            console.warn('Backend DOCX export error, using client fallback:', err);
+            fallbackClientExportDoc(html);
+        } finally {
+            elements.exportDocxBtn.innerHTML = originalText;
+        }
+    }
+
+    function fallbackClientExportDoc(content) {
         const htmlDoc = `
             <!DOCTYPE html>
             <html>
@@ -779,7 +994,7 @@
                 <style>
                     body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #111; }
                     h1 { font-size: 18pt; color: #000; text-transform: uppercase; margin-bottom: 2pt; }
-                    h2 { font-size: 13pt; color: #111; border-bottom: 1.5pt solid #000; margin-top: 14pt; margin-bottom: 6pt; }
+                    h2 { font-size: 13pt; color: #004f9e; border-bottom: 1.5pt solid #004f9e; margin-top: 14pt; margin-bottom: 6pt; }
                     h3 { font-size: 11pt; font-weight: bold; margin-top: 8pt; margin-bottom: 2pt; }
                     ul { margin-top: 4pt; margin-bottom: 8pt; }
                     li { margin-bottom: 3pt; }
@@ -806,7 +1021,7 @@
         elements.exportMenu.classList.add('hidden');
         const plain = getCanvasPlainText();
         navigator.clipboard.writeText(plain).then(() => {
-            alert('CV copied to clipboard!');
+            alert('CV text copied to clipboard!');
         });
     }
 
@@ -815,6 +1030,17 @@
     // ==========================================
 
     function setupEventListeners() {
+        // View Mode Switcher
+        if (elements.viewModeEdit) {
+            elements.viewModeEdit.addEventListener('click', () => setViewMode('edit'));
+        }
+        if (elements.viewModeSplit) {
+            elements.viewModeSplit.addEventListener('click', () => setViewMode('split'));
+        }
+        if (elements.viewModePreview) {
+            elements.viewModePreview.addEventListener('click', () => setViewMode('preview'));
+        }
+
         // Canvas Live Input
         elements.cvDocumentCanvas.addEventListener('input', () => {
             updateWordAndCharCount();
@@ -822,11 +1048,30 @@
         });
 
         // Formatting Tools
-        elements.toolBold.addEventListener('click', () => { document.execCommand('bold', false, null); });
-        elements.toolItalic.addEventListener('click', () => { document.execCommand('italic', false, null); });
-        elements.toolH2.addEventListener('click', () => { document.execCommand('formatBlock', false, '<h2>'); });
-        elements.toolH3.addEventListener('click', () => { document.execCommand('formatBlock', false, '<h3>'); });
-        elements.toolBullet.addEventListener('click', () => { document.execCommand('insertUnorderedList', false, null); });
+        if (elements.toolFormatBlock) {
+            elements.toolFormatBlock.addEventListener('change', (e) => {
+                const val = e.target.value;
+                if (!val) return;
+                document.execCommand('formatBlock', false, `<${val}>`);
+                e.target.value = '';
+                elements.cvDocumentCanvas.focus();
+            });
+        }
+        if (elements.toolBold) elements.toolBold.addEventListener('click', () => { document.execCommand('bold', false, null); });
+        if (elements.toolItalic) elements.toolItalic.addEventListener('click', () => { document.execCommand('italic', false, null); });
+        if (elements.toolUnderline) elements.toolUnderline.addEventListener('click', () => { document.execCommand('underline', false, null); });
+        if (elements.toolH2) elements.toolH2.addEventListener('click', () => { document.execCommand('formatBlock', false, '<h2>'); });
+        if (elements.toolH3) elements.toolH3.addEventListener('click', () => { document.execCommand('formatBlock', false, '<h3>'); });
+        if (elements.toolBullet) elements.toolBullet.addEventListener('click', () => { document.execCommand('insertUnorderedList', false, null); });
+        if (elements.toolNumbered) elements.toolNumbered.addEventListener('click', () => { document.execCommand('insertOrderedList', false, null); });
+        if (elements.toolInsertSection) {
+            elements.toolInsertSection.addEventListener('change', (e) => {
+                const val = e.target.value;
+                if (!val) return;
+                insertSectionTemplate(val);
+                e.target.value = '';
+            });
+        }
 
         // File Upload
         elements.uploadCvFileBtn.addEventListener('click', () => { elements.cvFileInput.click(); });
@@ -837,8 +1082,8 @@
             if (confirm('Reset CV to default Civil Service template?')) {
                 const res = await fetch('/api/cv/default-template');
                 const data = await res.json();
-                renderCvInCanvas(data.template);
-                elements.docTypeBadge.textContent = 'Civil Service Template';
+                applyDocumentTheme('word', 'Civil Service Template');
+                renderCvInCanvas(data.template, false);
                 await analyzeCvContent();
             }
         });
@@ -880,17 +1125,26 @@
                 if (!resumeId) return;
                 try {
                     elements.docTypeBadge.textContent = 'Loading CV...';
-                    const res = await fetch(`/api/profile/resumes/${resumeId}/text`, {
+                    const res = await fetch(`/api/profile/resumes/${resumeId}/content`, {
                         headers: getAuthHeaders(true)
                     });
                     if (res.ok) {
                         const rData = await res.json();
-                        renderCvInCanvas(rData.text);
+                        state.activeResumeType = rData.file_type || 'docx';
+                        state.activeResumeId = rData.id;
+                        state.activeResumeRawUrl = rData.raw_url || '';
+                        applyDocumentTheme(rData.file_type, rData.filename);
+                        setOriginalPreview(rData.raw_url, rData.filename);
+                        if (rData.html && rData.html.trim().length > 30) {
+                            renderCvInCanvas(rData.html, true);
+                        } else {
+                            renderCvInCanvas(rData.text || '', false);
+                        }
                         elements.docTypeBadge.textContent = rData.filename;
                         await analyzeCvContent();
                     }
                 } catch (err) {
-                    console.error('Failed to load resume text:', err);
+                    console.error('Failed to load resume content:', err);
                 }
             });
         }
