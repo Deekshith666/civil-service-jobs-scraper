@@ -59,6 +59,9 @@ if IS_VERCEL:
             except Exception:
                 pass
     
+    # Synced jobs database: store live pushed jobs via API
+    SYNCED_JOBS_DB_PATH = DATA_DIR / "synced_jobs.db"
+
     # Backwards compatibility alias
     DB_PATH = JOBS_DB_PATH
 else:
@@ -71,7 +74,17 @@ else:
     # In local environment, jobs.db is in data/, and users.db is also in data/ (gitignored)
     JOBS_DB_PATH = DATA_DIR / "jobs.db"
     USERS_DB_PATH = DATA_DIR / "users.db"
+    SYNCED_JOBS_DB_PATH = DATA_DIR / "synced_jobs.db"
     DB_PATH = JOBS_DB_PATH
+
+
+# Live Sync API & Security Configuration
+SYNC_API_KEY = os.getenv("SYNC_API_KEY", "").strip()
+LIVE_APP_URL = (
+    os.getenv("LIVE_APP_URL")
+    or os.getenv("VERCEL_PROJECT_URL")
+    or "https://civil-service-jobs-scraper.vercel.app"
+).strip().rstrip("/")
 
 
 # URLs

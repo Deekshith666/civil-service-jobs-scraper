@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from config import (
     JOBS_DB_PATH,
     USERS_DB_PATH,
+    SYNCED_JOBS_DB_PATH,
     DATABASE_URL,
     TURSO_DATABASE_URL,
     TURSO_AUTH_TOKEN,
@@ -74,30 +75,58 @@ def get_jobs_db_connection() -> sqlite3.Connection:
     """
     Create and return a database connection to the scraped jobs catalog.
     Uses immutable URI mode on read-only environments (e.g. Vercel serverless).
+    Dynamically attaches synced_jobs.db and creates a unified_jobs temporary view if synced jobs exist.
     """
     db_file_str = str(JOBS_DB_PATH)
 
     if not is_jobs_db_writable():
         uri_path = Path(db_file_str).resolve().as_posix()
         conn = sqlite3.connect(f"file:{uri_path}?mode=ro&immutable=1", uri=True)
-        conn.row_factory = sqlite3.Row
-        return conn
+    else:
+        try:
+            conn = sqlite3.connect(db_file_str)
+        except sqlite3.OperationalError as e:
+            if "readonly" in str(e).lower() or "attempt to write" in str(e).lower() or "unable to open" in str(e).lower():
+                uri_path = Path(db_file_str).resolve().as_posix()
+                conn = sqlite3.connect(f"file:{uri_path}?mode=ro&immutable=1", uri=True)
+            else:
+                raise
 
+    conn.row_factory = sqlite3.Row
+
+    # Dynamically attach synced_jobs.db overlay if present and populated
+    if SYNCED_JOBS_DB_PATH.exists() and SYNCED_JOBS_DB_PATH.stat().st_size > 0:
+        try:
+            synced_posix = Path(SYNCED_JOBS_DB_PATH).resolve().as_posix()
+            conn.execute(f"ATTACH DATABASE '{synced_posix}' AS synced")
+            conn.execute("""
+                CREATE TEMP VIEW IF NOT EXISTS unified_jobs AS
+                SELECT * FROM jobs
+                WHERE reference_number NOT IN (SELECT reference_number FROM synced.jobs)
+                UNION ALL
+                SELECT * FROM synced.jobs
+            """)
+        except Exception as e:
+            logger.warning(f"Could not attach synced_jobs.db: {e}")
+
+    return conn
+
+
+def get_jobs_table_target(conn: sqlite3.Connection) -> str:
+    """Return 'unified_jobs' if synced overlay view is active, otherwise 'jobs'."""
     try:
-        conn = sqlite3.connect(db_file_str)
-        conn.row_factory = sqlite3.Row
-        return conn
-    except sqlite3.OperationalError as e:
-        if "readonly" in str(e).lower() or "attempt to write" in str(e).lower() or "unable to open" in str(e).lower():
-            uri_path = Path(db_file_str).resolve().as_posix()
-            conn = sqlite3.connect(f"file:{uri_path}?mode=ro&immutable=1", uri=True)
-            conn.row_factory = sqlite3.Row
-            return conn
-        raise
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM sqlite_temp_master WHERE type='view' AND name='unified_jobs'")
+        if cur.fetchone():
+            return "unified_jobs"
+    except Exception:
+        pass
+    return "jobs"
 
 
 # Jobs catalog queries default connection
 get_db_connection = get_jobs_db_connection
+
 
 
 def get_users_db_connection() -> sqlite3.Connection:
@@ -585,6 +614,146 @@ def update_job_metadata(ref: str, metadata: Dict) -> bool:
         return cursor.rowcount > 0
 
 
+def init_synced_jobs_db():
+    """Ensure the synced jobs SQLite database schema matches primary jobs table."""
+    try:
+        SYNCED_JOBS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(str(SYNCED_JOBS_DB_PATH)) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS jobs (
+                    reference_number TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    department TEXT,
+                    location TEXT,
+                    salary TEXT,
+                    closing_date TEXT,
+                    job_url TEXT,
+                    logo_url TEXT,
+                    first_seen_at TEXT NOT NULL,
+                    last_scraped_at TEXT NOT NULL,
+                    salary_min INTEGER,
+                    salary_max INTEGER,
+                    job_grade TEXT,
+                    role_type TEXT,
+                    working_pattern TEXT,
+                    contract_type TEXT,
+                    number_of_jobs INTEGER DEFAULT 1
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_synced_jobs_dept ON jobs(department)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_synced_jobs_first_seen ON jobs(first_seen_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_synced_jobs_closing ON jobs(closing_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_synced_jobs_num_jobs ON jobs(number_of_jobs)")
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"Failed to initialize synced_jobs_db: {e}")
+
+
+def sync_live_jobs(jobs_list: List[Dict]) -> Dict:
+    """
+    Sync incoming scraped jobs into live storage.
+    Writes to SYNCED_JOBS_DB_PATH, and also updates primary JOBS_DB_PATH if writable.
+    Returns summary statistics.
+    """
+    init_synced_jobs_db()
+    inserted_count = 0
+    updated_count = 0
+    now_iso = datetime.now().isoformat()
+
+    try:
+        with sqlite3.connect(str(SYNCED_JOBS_DB_PATH)) as conn:
+            cursor = conn.cursor()
+            for job in jobs_list:
+                ref = str(job.get("reference_number", "")).strip()
+                if not ref:
+                    continue
+
+                # Calculate salary bounds if needed
+                s_min = job.get("salary_min")
+                s_max = job.get("salary_max")
+                if s_min is None and s_max is None and job.get("salary"):
+                    s_min, s_max = parse_salary_range(job.get("salary"))
+
+                num_jobs = job.get("number_of_jobs", 1)
+                first_seen = job.get("first_seen_at") or now_iso
+                last_scraped = job.get("last_scraped_at") or now_iso
+
+                cursor.execute("SELECT 1 FROM jobs WHERE reference_number = ?", (ref,))
+                if cursor.fetchone():
+                    # Update
+                    cursor.execute("""
+                        UPDATE jobs SET
+                            title = ?, department = ?, location = ?, salary = ?,
+                            closing_date = ?, job_url = ?, logo_url = ?, last_scraped_at = ?,
+                            salary_min = COALESCE(?, salary_min), salary_max = COALESCE(?, salary_max),
+                            job_grade = COALESCE(?, job_grade), role_type = COALESCE(?, role_type),
+                            working_pattern = COALESCE(?, working_pattern), contract_type = COALESCE(?, contract_type),
+                            number_of_jobs = COALESCE(?, number_of_jobs)
+                        WHERE reference_number = ?
+                    """, (
+                        job.get("title", ""), job.get("department", ""), job.get("location", ""), job.get("salary", ""),
+                        job.get("closing_date", ""), job.get("job_url", ""), job.get("logo_url", ""), last_scraped,
+                        s_min, s_max, job.get("job_grade"), job.get("role_type"),
+                        job.get("working_pattern"), job.get("contract_type"),
+                        num_jobs, ref
+                    ))
+                    updated_count += 1
+                else:
+                    # Insert
+                    cursor.execute("""
+                        INSERT INTO jobs (
+                            reference_number, title, department, location, salary,
+                            closing_date, job_url, logo_url, first_seen_at, last_scraped_at,
+                            salary_min, salary_max, job_grade, role_type, working_pattern, contract_type,
+                            number_of_jobs
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        ref, job.get("title", ""), job.get("department", ""), job.get("location", ""), job.get("salary", ""),
+                        job.get("closing_date", ""), job.get("job_url", ""), job.get("logo_url", ""),
+                        first_seen, last_scraped, s_min, s_max,
+                        job.get("job_grade"), job.get("role_type"), job.get("working_pattern"), job.get("contract_type"),
+                        num_jobs
+                    ))
+                    inserted_count += 1
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Error syncing jobs to synced_jobs.db: {e}")
+        raise
+
+    # If primary local database is writable, also upsert there
+    if is_jobs_db_writable():
+        for job in jobs_list:
+            try:
+                upsert_job(job)
+            except Exception:
+                pass
+
+    total_jobs = count_jobs()
+    return {
+        "received": len(jobs_list),
+        "inserted": inserted_count,
+        "updated": updated_count,
+        "total_jobs_in_catalog": total_jobs
+    }
+
+
+
+def get_today_new_jobs(limit: Optional[int] = None) -> List[Dict]:
+    """Retrieve all jobs first detected today (for live syncing to production)."""
+    today_prefix = date.today().isoformat() + "%"
+    with get_jobs_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
+        cursor = conn.cursor()
+        query = f"SELECT * FROM {tbl} WHERE first_seen_at LIKE ? ORDER BY first_seen_at DESC"
+        if limit:
+            query += f" LIMIT {int(limit)}"
+            cursor.execute(query, (today_prefix,))
+        else:
+            cursor.execute(query, (today_prefix,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
 def get_jobs(
     search: str = "",
     department: str = "",
@@ -685,6 +854,9 @@ def get_jobs(
     params.extend([limit, offset])
 
     with get_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
+        if tbl != "jobs":
+            query = query.replace("FROM jobs", f"FROM {tbl}", 1)
         cursor = conn.cursor()
         cursor.execute(query, params)
         rows = cursor.fetchall()
@@ -770,6 +942,9 @@ def count_jobs(
         params.append(today_prefix)
 
     with get_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
+        if tbl != "jobs":
+            query = query.replace("FROM jobs", f"FROM {tbl}", 1)
         cursor = conn.cursor()
         cursor.execute(query, params)
         return cursor.fetchone()[0]
@@ -778,8 +953,9 @@ def count_jobs(
 def get_job_by_reference(reference_number: str) -> Optional[Dict]:
     """Retrieve full job post details for a single reference number."""
     with get_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM jobs WHERE reference_number = ?", (reference_number,))
+        cursor.execute(f"SELECT * FROM {tbl} WHERE reference_number = ?", (reference_number,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
@@ -787,24 +963,27 @@ def get_job_by_reference(reference_number: str) -> Optional[Dict]:
 def get_departments() -> List[str]:
     """Get unique list of departments."""
     with get_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT department FROM jobs WHERE department IS NOT NULL AND department != '' ORDER BY department ASC")
+        cursor.execute(f"SELECT DISTINCT department FROM {tbl} WHERE department IS NOT NULL AND department != '' ORDER BY department ASC")
         return [row[0] for row in cursor.fetchall()]
 
 
 def get_job_grades() -> List[str]:
     """Get unique list of job grades."""
     with get_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT job_grade FROM jobs WHERE job_grade IS NOT NULL AND job_grade != '' ORDER BY job_grade ASC")
+        cursor.execute(f"SELECT DISTINCT job_grade FROM {tbl} WHERE job_grade IS NOT NULL AND job_grade != '' ORDER BY job_grade ASC")
         return [row[0] for row in cursor.fetchall()]
 
 
 def get_role_types() -> List[str]:
     """Get unique list of role types."""
     with get_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT role_type FROM jobs WHERE role_type IS NOT NULL AND role_type != '' ORDER BY role_type ASC")
+        cursor.execute(f"SELECT DISTINCT role_type FROM {tbl} WHERE role_type IS NOT NULL AND role_type != '' ORDER BY role_type ASC")
         # Role types can be comma separated
         unique_roles = set()
         for row in cursor.fetchall():
@@ -818,8 +997,9 @@ def get_role_types() -> List[str]:
 def get_contract_types() -> List[str]:
     """Get unique list of contract types."""
     with get_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT contract_type FROM jobs WHERE contract_type IS NOT NULL AND contract_type != '' ORDER BY contract_type ASC")
+        cursor.execute(f"SELECT DISTINCT contract_type FROM {tbl} WHERE contract_type IS NOT NULL AND contract_type != '' ORDER BY contract_type ASC")
         unique_contracts = set()
         for row in cursor.fetchall():
             for c in row[0].split(","):
@@ -832,8 +1012,9 @@ def get_contract_types() -> List[str]:
 def get_working_patterns() -> List[str]:
     """Get unique list of working patterns."""
     with get_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT working_pattern FROM jobs WHERE working_pattern IS NOT NULL AND working_pattern != '' ORDER BY working_pattern ASC")
+        cursor.execute(f"SELECT DISTINCT working_pattern FROM {tbl} WHERE working_pattern IS NOT NULL AND working_pattern != '' ORDER BY working_pattern ASC")
         unique_patterns = set()
         for row in cursor.fetchall():
             for p in row[0].split(","):
@@ -846,8 +1027,9 @@ def get_working_patterns() -> List[str]:
 def get_filter_options() -> Dict:
     """Retrieve all available facet filter options in a single call."""
     with get_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute("SELECT MIN(salary_min), MAX(salary_max) FROM jobs WHERE salary_min > 0")
+        cursor.execute(f"SELECT MIN(salary_min), MAX(salary_max) FROM {tbl} WHERE salary_min > 0")
         min_s, max_s = cursor.fetchone()
         
     return {
@@ -866,10 +1048,11 @@ def get_filter_options() -> Dict:
 def get_jobs_missing_details(limit: int = 50) -> List[Dict]:
     """Return jobs that have not yet had their detail page metadata scraped."""
     with get_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT reference_number, job_url, title
-            FROM jobs
+            FROM {tbl}
             WHERE job_grade IS NULL OR role_type IS NULL OR contract_type IS NULL
             LIMIT ?
         """, (limit,))
@@ -879,9 +1062,10 @@ def get_jobs_missing_details(limit: int = 50) -> List[Dict]:
 def count_jobs_missing_details() -> int:
     """Count jobs that do not yet have detail metadata."""
     with get_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT COUNT(*) FROM jobs
+        cursor.execute(f"""
+            SELECT COUNT(*) FROM {tbl}
             WHERE job_grade IS NULL OR role_type IS NULL OR contract_type IS NULL
         """)
         return cursor.fetchone()[0]
@@ -891,15 +1075,16 @@ def get_dashboard_stats() -> Dict:
     """Calculate aggregate statistics for dashboard metrics."""
     today_prefix = date.today().isoformat() + "%"
     with get_db_connection() as conn:
+        tbl = get_jobs_table_target(conn)
         cursor = conn.cursor()
         
-        cursor.execute("SELECT COUNT(*) FROM jobs")
+        cursor.execute(f"SELECT COUNT(*) FROM {tbl}")
         total_jobs = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM jobs WHERE first_seen_at LIKE ?", (today_prefix,))
+        cursor.execute(f"SELECT COUNT(*) FROM {tbl} WHERE first_seen_at LIKE ?", (today_prefix,))
         new_jobs_today = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(DISTINCT department) FROM jobs WHERE department IS NOT NULL AND department != ''")
+        cursor.execute(f"SELECT COUNT(DISTINCT department) FROM {tbl} WHERE department IS NOT NULL AND department != ''")
         departments_count = cursor.fetchone()[0]
         
         cursor.execute("SELECT * FROM scrape_logs ORDER BY id DESC LIMIT 1")
@@ -912,6 +1097,7 @@ def get_dashboard_stats() -> Dict:
             "departments_count": departments_count,
             "last_run": last_run
         }
+
 
 
 def log_scrape_run(

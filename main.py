@@ -8,6 +8,7 @@ import database
 from config import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_SCHEDULE_HOUR, DEFAULT_SCHEDULE_MINUTE
 from scraper import CivilServiceScraper
 from scheduler import start_scheduler
+from sync_client import push_jobs_to_live, sync_today_jobs
 
 
 def cmd_scrape(args):
@@ -26,6 +27,29 @@ def cmd_scrape(args):
     print(f"Duration:        {result['duration_seconds']} seconds")
     if result.get("error"):
         print(f"Error Message:   {result['error']}")
+    print("-" * 40)
+
+    # Optional direct push to live API
+    if getattr(args, "sync", False):
+        new_jobs = result.get("new_jobs") or []
+        if new_jobs:
+            print(f"\n==> Syncing {len(new_jobs)} newly scraped vacancies directly to live production...")
+            push_jobs_to_live(new_jobs, live_url=args.target_url)
+        else:
+            print("\n==> No newly added jobs to sync to live in this run.")
+
+
+def cmd_sync(args):
+    """Synchronize jobs directly to the live production site via REST API."""
+    print(f"==> Initiating direct live sync (target: {args.target_url or 'default live app'})...")
+    res = sync_today_jobs(live_url=args.target_url, limit=args.limit)
+    print("\nSync Execution Summary:")
+    print("-" * 40)
+    print(f"Status:       {res.get('status', 'unknown').upper()}")
+    print(f"Synced Count: {res.get('synced_count', 0)}")
+    print(f"Message:      {res.get('message', '')}")
+    if res.get("total_jobs_in_catalog"):
+        print(f"Live Catalog: {res['total_jobs_in_catalog']} vacancies")
     print("-" * 40)
 
 
@@ -99,6 +123,36 @@ def main():
         default=None,
         help="Maximum pages to scrape (optional)"
     )
+    scrape_parser.add_argument(
+        "--sync",
+        action="store_true",
+        help="Directly push newly scraped jobs to live production API on completion"
+    )
+    scrape_parser.add_argument(
+        "--target-url",
+        default=None,
+        help="Override live application URL (defaults to LIVE_APP_URL in .env)"
+    )
+
+    # Sync command (direct data push without scraping)
+    sync_parser = subparsers.add_parser("sync", help="Push today's new jobs directly to live production API")
+    sync_parser.add_argument(
+        "--today",
+        action="store_true",
+        default=True,
+        help="Sync all jobs first detected today (default: True)"
+    )
+    sync_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit number of jobs to sync (optional)"
+    )
+    sync_parser.add_argument(
+        "--target-url",
+        default=None,
+        help="Override live application URL (defaults to LIVE_APP_URL in .env)"
+    )
 
     # Enrich command
     enrich_parser = subparsers.add_parser("enrich", help="Enrich vacancies with detail page metadata")
@@ -131,6 +185,8 @@ def main():
 
     if args.command == "scrape":
         cmd_scrape(args)
+    elif args.command == "sync":
+        cmd_sync(args)
     elif args.command == "enrich":
         cmd_enrich(args)
     elif args.command == "serve":
@@ -141,6 +197,7 @@ def main():
         cmd_stats(args)
     else:
         parser.print_help()
+
 
 
 if __name__ == "__main__":

@@ -2,7 +2,10 @@
 
 import os
 import io
-from typing import Dict, List, Optional
+import secrets
+import logging
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 from fastapi import (
     FastAPI, BackgroundTasks, Query, Depends, HTTPException,
     Header, Cookie, Request, Response, UploadFile, File, Form, status
@@ -13,6 +16,8 @@ from pydantic import BaseModel
 
 import config
 import database
+
+logger = logging.getLogger("cs_app")
 from scraper import CivilServiceScraper
 from ai_service import ai_service, DEFAULT_CV_TEMPLATE
 
@@ -45,7 +50,7 @@ active_enrich_state = {
 }
 
 
-def _run_scraper_task(mode: str, max_pages: Optional[int]):
+def _run_scraper_task(mode: str, max_pages: Optional[int], sync_to_live: bool = False):
     """Background execution runner for on-demand scrape."""
     global active_scrape_state
     active_scrape_state["is_running"] = True
@@ -54,6 +59,7 @@ def _run_scraper_task(mode: str, max_pages: Optional[int]):
     active_scrape_state["jobs_found"] = 0
     active_scrape_state["new_jobs_added"] = 0
     active_scrape_state["error"] = None
+    active_scrape_state["live_sync_result"] = None
 
     def progress_callback(update: dict):
         active_scrape_state["pages_scraped"] = update.get("pages_scraped", 0)
@@ -68,10 +74,21 @@ def _run_scraper_task(mode: str, max_pages: Optional[int]):
             progress_callback=progress_callback
         )
         active_scrape_state["last_result"] = res
+
+        # If sync to live is requested and new jobs were found, push to live API
+        if sync_to_live and res.get("new_jobs"):
+            try:
+                import sync_client
+                sync_res = sync_client.push_jobs_to_live(res["new_jobs"], source="dashboard_modal")
+                active_scrape_state["live_sync_result"] = sync_res
+            except Exception as sync_err:
+                logger.error(f"Post-scrape live sync failed: {sync_err}")
+                active_scrape_state["live_sync_error"] = str(sync_err)
     except Exception as e:
         active_scrape_state["error"] = str(e)
     finally:
         active_scrape_state["is_running"] = False
+
 
 
 def _run_enrichment_task(limit: Optional[int], max_workers: int):
@@ -252,6 +269,7 @@ async def get_logs(limit: int = Query(10, ge=1, le=50)):
 class ScrapeRequest(BaseModel):
     mode: str = "incremental"
     max_pages: Optional[int] = None
+    sync_to_live: bool = True
 
 
 @app.post("/api/scrape")
@@ -267,8 +285,9 @@ async def trigger_scrape(request: ScrapeRequest, background_tasks: BackgroundTas
     if active_scrape_state["is_running"]:
         return {"status": "busy", "message": "A scrape run is already in progress."}
 
-    background_tasks.add_task(_run_scraper_task, request.mode, request.max_pages)
-    return {"status": "started", "mode": request.mode, "max_pages": request.max_pages}
+    background_tasks.add_task(_run_scraper_task, request.mode, request.max_pages, request.sync_to_live)
+    return {"status": "started", "mode": request.mode, "max_pages": request.max_pages, "sync_to_live": request.sync_to_live}
+
 
 
 @app.get("/api/scrape/status")
@@ -306,8 +325,93 @@ async def get_enrich_status():
 
 
 # ==========================================
+# Live Data Sync Endpoints (Direct push without Git)
+# ==========================================
+
+class SyncJobsRequest(BaseModel):
+    jobs: List[Dict[str, Any]]
+    source: Optional[str] = "scraper_cli"
+    mode: Optional[str] = "today"
+
+
+def _verify_sync_token(x_sync_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+    """Validate sync token from X-Sync-Token or Bearer Authorization header."""
+    configured_key = config.SYNC_API_KEY or os.getenv("SYNC_API_KEY", "")
+    if not configured_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server sync API key (SYNC_API_KEY) is not configured in production environment variables."
+        )
+
+    provided = None
+    if x_sync_token:
+        provided = x_sync_token.strip()
+    elif authorization and authorization.startswith("Bearer "):
+        provided = authorization[7:].strip()
+
+    if not provided or not secrets.compare_digest(provided, configured_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: Invalid or missing sync authentication token."
+        )
+
+
+@app.post("/api/sync/jobs")
+async def sync_incoming_jobs(request: SyncJobsRequest, _auth: None = Depends(_verify_sync_token)):
+    """
+    Receive newly scraped jobs and sync directly into production database.
+    Does not require Git push or Vercel redeployment.
+    """
+    if not request.jobs:
+        return {
+            "status": "success",
+            "message": "No jobs provided in sync payload.",
+            "synced_count": 0,
+            "total_jobs_in_catalog": database.count_jobs(),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    try:
+        res = database.sync_live_jobs(request.jobs)
+        return {
+            "status": "success",
+            "message": f"Successfully synced {res['received']} jobs to live catalog.",
+            "synced_count": res["received"],
+            "inserted": res["inserted"],
+            "updated": res["updated"],
+            "total_jobs_in_catalog": res["total_jobs_in_catalog"],
+            "source": request.source,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Failed to sync jobs to live: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to sync jobs into live storage: {str(e)}"
+        )
+
+
+@app.get("/api/sync/status")
+async def get_sync_status():
+    """Check sync endpoint readiness and configuration status."""
+    is_configured = bool(config.SYNC_API_KEY or os.getenv("SYNC_API_KEY"))
+    synced_file_exists = config.SYNCED_JOBS_DB_PATH.exists()
+    synced_file_size = config.SYNCED_JOBS_DB_PATH.stat().st_size if synced_file_exists else 0
+
+    return {
+        "sync_enabled": is_configured,
+        "is_vercel": config.IS_VERCEL,
+        "synced_db_active": synced_file_exists and synced_file_size > 0,
+        "synced_db_bytes": synced_file_size,
+        "total_jobs": database.count_jobs(),
+        "new_jobs_today": database.get_dashboard_stats()["new_jobs_today"]
+    }
+
+
+# ==========================================
 # User Authentication & Profile Endpoints
 # ==========================================
+
 
 async def get_current_user(
     authorization: Optional[str] = Header(None),

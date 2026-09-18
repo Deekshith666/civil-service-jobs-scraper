@@ -448,6 +448,7 @@ class CivilServiceScraper:
         pages_scraped = 0
         jobs_found = 0
         new_jobs_added = 0
+        new_jobs_list = []
         status = "success"
         error_msg = None
 
@@ -479,6 +480,7 @@ class CivilServiceScraper:
                     is_new = upsert_job(job)
                     if is_new:
                         new_jobs_added += 1
+                        new_jobs_list.append(job)
 
                 if progress_callback:
                     progress_callback({
@@ -557,6 +559,7 @@ class CivilServiceScraper:
             "pages_scraped": pages_scraped,
             "jobs_found": jobs_found,
             "new_jobs_added": new_jobs_added,
+            "new_jobs": new_jobs_list,
             "duration_seconds": duration,
             "status": status,
             "error": error_msg,

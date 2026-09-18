@@ -642,6 +642,8 @@ async function triggerScraper() {
     const mode = elements.scrapeModeSelect.value;
     const maxPagesVal = elements.maxPagesInput.value.trim();
     const maxPages = maxPagesVal ? parseInt(maxPagesVal, 10) : null;
+    const syncCheckbox = document.getElementById('syncToLiveCheckbox');
+    const syncToLive = syncCheckbox ? syncCheckbox.checked : true;
 
     closeScrapeModal();
     showScraperBanner(mode);
@@ -650,8 +652,9 @@ async function triggerScraper() {
         const res = await fetch('/api/scrape', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mode, max_pages: maxPages })
+            body: JSON.stringify({ mode, max_pages: maxPages, sync_to_live: syncToLive })
         });
+
         const data = await res.json();
         if (data.status === 'started') {
             startScraperPolling();

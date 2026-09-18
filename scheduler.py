@@ -10,25 +10,35 @@ from apscheduler.triggers.cron import CronTrigger
 
 from config import DEFAULT_SCHEDULE_HOUR, DEFAULT_SCHEDULE_MINUTE
 from scraper import CivilServiceScraper
+from sync_client import push_jobs_to_live
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("cs_scheduler")
 
 
 def run_daily_scrape(mode: str = "incremental"):
-    """Execute the scheduled job scrape task."""
+    """Execute the scheduled job scrape task and sync new jobs to live."""
     logger.info(f"--- Triggering daily scrape job (mode={mode}) at {datetime.now()} ---")
     scraper = CivilServiceScraper()
     try:
         summary = scraper.scrape(mode=mode)
+        new_jobs = summary.get("new_jobs") or []
         logger.info(
             f"Daily scrape finished successfully: "
             f"{summary.get('new_jobs_added', 0)} new jobs added out of "
             f"{summary.get('jobs_found', 0)} found across "
             f"{summary.get('pages_scraped', 0)} pages in {summary.get('duration_seconds', 0)}s."
         )
+
+        # Automatically push newly discovered vacancies to live production
+        if new_jobs:
+            logger.info(f"Automatically syncing {len(new_jobs)} new jobs to live production...")
+            push_jobs_to_live(new_jobs, source="daily_scheduled_cron")
+        else:
+            logger.info("No newly added jobs to sync to live production today.")
     except Exception as e:
         logger.error(f"Daily scrape failed with error: {e}")
+
 
 
 def start_scheduler(hour: int = DEFAULT_SCHEDULE_HOUR, minute: int = DEFAULT_SCHEDULE_MINUTE, run_now: bool = False):
