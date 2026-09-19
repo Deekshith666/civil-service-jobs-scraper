@@ -35,7 +35,14 @@ def run_daily_scrape(mode: str = "incremental"):
             logger.info(f"Automatically syncing {len(new_jobs)} new jobs to live production...")
             push_jobs_to_live(new_jobs, source="daily_scheduled_cron")
         else:
-            logger.info("No newly added jobs to sync to live production today.")
+            # Fallback: check if there are jobs first detected today to ensure live is up-to-date
+            import database
+            today_jobs = database.get_today_new_jobs()
+            if today_jobs:
+                logger.info(f"Syncing {len(today_jobs)} jobs detected today to live production...")
+                push_jobs_to_live(today_jobs, source="daily_scheduled_cron_today_fallback")
+            else:
+                logger.info("No newly added jobs to sync to live production today.")
     except Exception as e:
         logger.error(f"Daily scrape failed with error: {e}")
 

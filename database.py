@@ -130,6 +130,29 @@ def parse_closing_date_to_iso(date_str: Optional[str]) -> Optional[str]:
 
 
 
+CANONICAL_JOB_COLUMNS = [
+    "reference_number",
+    "title",
+    "department",
+    "location",
+    "salary",
+    "closing_date",
+    "job_url",
+    "logo_url",
+    "first_seen_at",
+    "last_scraped_at",
+    "salary_min",
+    "salary_max",
+    "job_grade",
+    "role_type",
+    "working_pattern",
+    "contract_type",
+    "number_of_jobs",
+    "closing_date_iso",
+]
+CANONICAL_JOB_COLUMNS_SQL = ", ".join(CANONICAL_JOB_COLUMNS)
+
+
 def get_jobs_db_connection() -> sqlite3.Connection:
     """
     Create and return a database connection to the scraped jobs catalog.
@@ -158,12 +181,12 @@ def get_jobs_db_connection() -> sqlite3.Connection:
         try:
             synced_posix = Path(SYNCED_JOBS_DB_PATH).resolve().as_posix()
             conn.execute(f"ATTACH DATABASE '{synced_posix}' AS synced")
-            conn.execute("""
+            conn.execute(f"""
                 CREATE TEMP VIEW IF NOT EXISTS unified_jobs AS
-                SELECT * FROM jobs
+                SELECT {CANONICAL_JOB_COLUMNS_SQL} FROM jobs
                 WHERE reference_number NOT IN (SELECT reference_number FROM synced.jobs)
                 UNION ALL
-                SELECT * FROM synced.jobs
+                SELECT {CANONICAL_JOB_COLUMNS_SQL} FROM synced.jobs
             """)
         except Exception as e:
             logger.warning(f"Could not attach synced_jobs.db: {e}")
@@ -768,6 +791,14 @@ def init_synced_jobs_db():
         SYNCED_JOBS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(str(SYNCED_JOBS_DB_PATH)) as conn:
             cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(jobs)")
+            info = cursor.fetchall()
+            if info:
+                existing_cols = [r[1] for r in info]
+                if existing_cols != CANONICAL_JOB_COLUMNS:
+                    # Drop legacy/mismatched table so it recreates cleanly
+                    cursor.execute("DROP TABLE jobs")
+
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
                     reference_number TEXT PRIMARY KEY,
@@ -776,7 +807,6 @@ def init_synced_jobs_db():
                     location TEXT,
                     salary TEXT,
                     closing_date TEXT,
-                    closing_date_iso TEXT,
                     job_url TEXT,
                     logo_url TEXT,
                     first_seen_at TEXT NOT NULL,
@@ -787,16 +817,10 @@ def init_synced_jobs_db():
                     role_type TEXT,
                     working_pattern TEXT,
                     contract_type TEXT,
-                    number_of_jobs INTEGER DEFAULT 1
+                    number_of_jobs INTEGER DEFAULT 1,
+                    closing_date_iso TEXT
                 )
             """)
-            cursor.execute("PRAGMA table_info(jobs)")
-            existing_cols = {row[1] for row in cursor.fetchall()}
-            if "closing_date_iso" not in existing_cols:
-                cursor.execute("ALTER TABLE jobs ADD COLUMN closing_date_iso TEXT")
-            if "number_of_jobs" not in existing_cols:
-                cursor.execute("ALTER TABLE jobs ADD COLUMN number_of_jobs INTEGER DEFAULT 1")
-
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_synced_jobs_dept ON jobs(department)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_synced_jobs_first_seen ON jobs(first_seen_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_synced_jobs_closing ON jobs(closing_date)")
@@ -850,38 +874,32 @@ def sync_live_jobs(jobs_list: List[Dict]) -> Dict:
                     cursor.execute("""
                         UPDATE jobs SET
                             title = ?, department = ?, location = ?, salary = ?,
-                            closing_date = ?, closing_date_iso = COALESCE(?, closing_date_iso),
-                            job_url = ?, logo_url = ?, last_scraped_at = ?,
+                            closing_date = ?, job_url = ?, logo_url = ?, last_scraped_at = ?,
                             salary_min = COALESCE(?, salary_min), salary_max = COALESCE(?, salary_max),
                             job_grade = COALESCE(?, job_grade), role_type = COALESCE(?, role_type),
                             working_pattern = COALESCE(?, working_pattern), contract_type = COALESCE(?, contract_type),
-                            number_of_jobs = COALESCE(?, number_of_jobs)
+                            number_of_jobs = COALESCE(?, number_of_jobs),
+                            closing_date_iso = COALESCE(?, closing_date_iso)
                         WHERE reference_number = ?
                     """, (
                         job.get("title", ""), job.get("department", ""), job.get("location", ""), job.get("salary", ""),
-                        job.get("closing_date", ""), closing_iso,
-                        job.get("job_url", ""), job.get("logo_url", ""), last_scraped,
+                        job.get("closing_date", ""), job.get("job_url", ""), job.get("logo_url", ""), last_scraped,
                         s_min, s_max, job.get("job_grade"), job.get("role_type"),
                         job.get("working_pattern"), job.get("contract_type"),
-                        num_jobs, ref
+                        num_jobs, closing_iso, ref
                     ))
                     updated_count += 1
                 else:
-                    # Insert
-                    cursor.execute("""
-                        INSERT INTO jobs (
-                            reference_number, title, department, location, salary,
-                            closing_date, closing_date_iso, job_url, logo_url, first_seen_at, last_scraped_at,
-                            salary_min, salary_max, job_grade, role_type, working_pattern, contract_type,
-                            number_of_jobs
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    # Insert using canonical columns
+                    cursor.execute(f"""
+                        INSERT INTO jobs ({CANONICAL_JOB_COLUMNS_SQL})
+                        VALUES ({', '.join(['?'] * len(CANONICAL_JOB_COLUMNS))})
                     """, (
                         ref, job.get("title", ""), job.get("department", ""), job.get("location", ""), job.get("salary", ""),
-                        job.get("closing_date", ""), closing_iso,
-                        job.get("job_url", ""), job.get("logo_url", ""),
+                        job.get("closing_date", ""), job.get("job_url", ""), job.get("logo_url", ""),
                         first_seen, last_scraped, s_min, s_max,
                         job.get("job_grade"), job.get("role_type"), job.get("working_pattern"), job.get("contract_type"),
-                        num_jobs
+                        num_jobs, closing_iso
                     ))
                     inserted_count += 1
             conn.commit()

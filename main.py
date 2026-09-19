@@ -29,11 +29,15 @@ def cmd_scrape(args):
         print(f"Error Message:   {result['error']}")
     print("-" * 40)
 
-    # Optional direct push to live API
-    if getattr(args, "sync", False):
+    # Automatically push to live API unless explicitly disabled via --no-sync
+    if getattr(args, "sync", True):
         new_jobs = result.get("new_jobs") or []
+        if not new_jobs:
+            # Fallback to today's jobs if new_jobs was 0 in this specific run
+            new_jobs = database.get_today_new_jobs()
+
         if new_jobs:
-            print(f"\n==> Syncing {len(new_jobs)} newly scraped vacancies directly to live production...")
+            print(f"\n==> Syncing {len(new_jobs)} vacancies directly to live production...")
             push_jobs_to_live(new_jobs, live_url=args.target_url)
         else:
             print("\n==> No newly added jobs to sync to live in this run.")
@@ -126,7 +130,14 @@ def main():
     scrape_parser.add_argument(
         "--sync",
         action="store_true",
-        help="Directly push newly scraped jobs to live production API on completion"
+        default=True,
+        help="Directly push newly scraped jobs to live production API on completion (default: True)"
+    )
+    scrape_parser.add_argument(
+        "--no-sync",
+        dest="sync",
+        action="store_false",
+        help="Skip syncing scraped jobs to live production API"
     )
     scrape_parser.add_argument(
         "--target-url",
