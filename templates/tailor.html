@@ -171,7 +171,7 @@
                         </svg>
                         <span>Upload File</span>
                     </button>
-                    <input type="file" id="cvFileInput" accept=".pdf,.docx,.doc,.txt" class="hidden">
+                    <input type="file" id="cvFileInput" accept=".pdf,.docx,.doc" class="hidden">
 
                     <button type="button" class="tool-btn-subtle" id="cleanFormatCvBtn" title="Auto-fix line breaks, join split sentences into paragraphs, and restore headings">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -662,10 +662,13 @@
         </div>
     </div>
 
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
+
     <!-- Document Conversion & Export Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <!-- Script Controller -->
-    <script src="/static/js/tailor.js?v=2.3.0"></script>
+    <script src="/static/js/tailor.js?v=3.0.0"></script>
 </body>
 </html>

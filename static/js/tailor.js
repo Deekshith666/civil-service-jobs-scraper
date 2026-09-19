@@ -29,7 +29,9 @@
         aiProvider: localStorage.getItem('ai_provider') || 'openai',
         aiApiKey: localStorage.getItem('ai_api_key') || '',
         isAnalyzing: false,
-        debounceTimer: null
+        debounceTimer: null,
+        originalLoadedHtml: '',
+        originalBlobUrl: ''
     };
 
     // DOM Elements
@@ -164,7 +166,10 @@
 
         // User Resumes & Auth Gate
         userResumeSelect: document.getElementById('userResumeSelect'),
-        authGateModal: document.getElementById('authGateModal')
+        authGateModal: document.getElementById('authGateModal'),
+
+        // Export dropdown wrapper (for click-outside close)
+        exportDropdownWrapper: document.querySelector('.export-dropdown-wrapper')
     };
 
     function getAuthHeaders(includeContentType = true) {
@@ -285,8 +290,10 @@
 
             if (data.initial_cv_html && data.initial_cv_html.trim().length > 30) {
                 renderCvInCanvas(data.initial_cv_html, true);
+                state.originalLoadedHtml = data.initial_cv_html;
             } else {
                 renderCvInCanvas(data.initial_cv_text || data.default_cv_template, false);
+                state.originalLoadedHtml = elements.cvDocumentCanvas ? elements.cvDocumentCanvas.innerHTML : '';
             }
 
             // Run initial ATS analysis
@@ -376,39 +383,79 @@
             elements.previewOpenTabLink.style.display = rawUrl ? 'inline-flex' : 'none';
         }
 
-        // Render formatted document on originalDocSheet
+        // Compute HTML for the original sheet pane
+        let htmlToDisplay = originalHtml || '';
+        if (!htmlToDisplay && originalText) {
+            htmlToDisplay = reconstructCvHtml(originalText);
+        }
+
+        // Store original HTML snapshot once — never overwritten by user edits
+        if (htmlToDisplay && !state.originalLoadedHtml) {
+            state.originalLoadedHtml = htmlToDisplay;
+        }
+
         if (elements.originalDocSheet) {
-            let htmlToDisplay = originalHtml;
-            if (!htmlToDisplay && originalText) {
-                htmlToDisplay = reconstructCvHtml(originalText);
-            }
-            if (!htmlToDisplay && elements.cvDocumentCanvas) {
-                htmlToDisplay = elements.cvDocumentCanvas.innerHTML;
-            }
-            elements.originalDocSheet.innerHTML = htmlToDisplay || '<p>Original document loaded.</p>';
+            const sheetHtml = state.originalLoadedHtml || htmlToDisplay || '<p>Original document loaded.</p>';
+            elements.originalDocSheet.innerHTML = sheetHtml;
             elements.originalDocSheet.className = `doc-paper-sheet ${isPdf ? 'doc-style-pdf' : 'doc-style-word'} readonly-sheet`;
         }
 
-        // Handle iframe vs formatted sheet
-        if (rawUrl && isPdf && elements.originalPreviewFrame) {
-            elements.originalPreviewFrame.src = rawUrl;
-            elements.originalPreviewFrame.classList.remove('hidden');
-            if (elements.originalDocContentView) elements.originalDocContentView.classList.add('hidden');
-            if (elements.previewFallbackMsg) elements.previewFallbackMsg.classList.add('hidden');
-
-            elements.originalPreviewFrame.onerror = () => {
-                elements.originalPreviewFrame.classList.add('hidden');
-                if (elements.originalDocContentView) elements.originalDocContentView.classList.remove('hidden');
-            };
+        if (isPdf) {
+            if (rawUrl && rawUrl.startsWith('blob:')) {
+                // Local file upload — blob URL works in iframe immediately
+                state.originalBlobUrl = rawUrl;
+                _showPdfInIframe(rawUrl);
+            } else if (rawUrl) {
+                // Server URL — fetch with auth headers to build a local blob URL
+                // Fix: iframe cannot send Authorization header for stored resumes
+                fetchBlobUrl(rawUrl).then(blobUrl => {
+                    if (blobUrl) {
+                        state.originalBlobUrl = blobUrl;
+                        _showPdfInIframe(blobUrl);
+                    } else {
+                        _showHtmlOriginal();
+                    }
+                });
+            } else {
+                _showHtmlOriginal();
+            }
         } else {
-            if (elements.originalPreviewFrame) {
-                elements.originalPreviewFrame.src = 'about:blank';
-                elements.originalPreviewFrame.classList.add('hidden');
-            }
-            if (elements.originalDocContentView) {
-                elements.originalDocContentView.classList.remove('hidden');
-            }
-            if (elements.previewFallbackMsg) elements.previewFallbackMsg.classList.add('hidden');
+            _showHtmlOriginal();
+        }
+    }
+
+    // Show a PDF file inside the preview iframe via blob URL
+    function _showPdfInIframe(blobUrl) {
+        if (!elements.originalPreviewFrame) return;
+        elements.originalPreviewFrame.src = blobUrl;
+        elements.originalPreviewFrame.classList.remove('hidden');
+        if (elements.originalDocContentView) elements.originalDocContentView.classList.add('hidden');
+        if (elements.previewFallbackMsg) elements.previewFallbackMsg.classList.add('hidden');
+    }
+
+    // Show the formatted HTML doc sheet (DOCX or PDF fallback)
+    function _showHtmlOriginal() {
+        if (elements.originalPreviewFrame) {
+            elements.originalPreviewFrame.src = 'about:blank';
+            elements.originalPreviewFrame.classList.add('hidden');
+        }
+        if (elements.originalDocContentView) elements.originalDocContentView.classList.remove('hidden');
+        if (elements.previewFallbackMsg) elements.previewFallbackMsg.classList.add('hidden');
+    }
+
+    // Fetch a server URL with auth headers, return a local blob URL for iframe use
+    async function fetchBlobUrl(url) {
+        if (!url || url.startsWith('blob:')) return url;
+        try {
+            const token = localStorage.getItem('civil_auth_token');
+            const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+            const res = await fetch(url, { headers });
+            if (!res.ok) return null;
+            const blob = await res.blob();
+            return URL.createObjectURL(blob);
+        } catch (e) {
+            console.warn('[Preview] fetchBlobUrl failed:', e);
+            return null;
         }
     }
 
@@ -421,21 +468,32 @@
         if (elements.viewModeSplit) elements.viewModeSplit.classList.toggle('active', mode === 'split');
         if (elements.viewModePreview) elements.viewModePreview.classList.toggle('active', mode === 'preview');
 
-        // Ensure original preview content is populated
         if (mode === 'split' || mode === 'preview') {
-            if (elements.originalDocSheet && (!elements.originalDocSheet.innerHTML || elements.originalDocSheet.innerHTML.trim().length < 20)) {
-                if (elements.cvDocumentCanvas) {
+            // Populate original sheet from stored snapshot — NOT from live editable canvas
+            if (elements.originalDocSheet) {
+                if (state.originalLoadedHtml) {
+                    elements.originalDocSheet.innerHTML = state.originalLoadedHtml;
+                } else if (elements.cvDocumentCanvas) {
                     elements.originalDocSheet.innerHTML = elements.cvDocumentCanvas.innerHTML;
                 }
             }
-            // If iframe failed or blank, show originalDocContentView
-            if (elements.originalPreviewFrame && (!elements.originalPreviewFrame.src || elements.originalPreviewFrame.src.endsWith('blank'))) {
-                if (state.activeResumeRawUrl && (state.activeResumeRawUrl.endsWith('.pdf') || state.activeResumeType === 'pdf')) {
-                    elements.originalPreviewFrame.src = state.activeResumeRawUrl;
-                } else if (elements.originalDocContentView) {
-                    elements.originalPreviewFrame.classList.add('hidden');
-                    elements.originalDocContentView.classList.remove('hidden');
-                }
+
+            // Show PDF iframe or HTML sheet as appropriate
+            const isPdf = state.activeResumeType === 'pdf' ||
+                          (state.activeResumeRawUrl && state.activeResumeRawUrl.toLowerCase().endsWith('.pdf'));
+            if (isPdf && state.originalBlobUrl) {
+                _showPdfInIframe(state.originalBlobUrl);
+            } else if (isPdf && state.activeResumeRawUrl) {
+                fetchBlobUrl(state.activeResumeRawUrl).then(blobUrl => {
+                    if (blobUrl) {
+                        state.originalBlobUrl = blobUrl;
+                        _showPdfInIframe(blobUrl);
+                    } else {
+                        _showHtmlOriginal();
+                    }
+                });
+            } else {
+                _showHtmlOriginal();
             }
         }
     }
@@ -902,28 +960,42 @@
         const bulletText = elements.qaSuggestedBulletBox.textContent.trim();
         if (!bulletText) return;
 
-        // Find insertion point in canvas: after an existing <li> in Experience, or append
-        const lis = elements.cvDocumentCanvas.querySelectorAll('li');
         const newLi = document.createElement('li');
         newLi.className = 'highlight-added';
         newLi.textContent = bulletText;
 
-        if (lis.length > 0) {
-            // Insert under first experience block
-            lis[0].parentNode.insertBefore(newLi, lis[0].nextSibling);
-        } else {
-            const ul = document.createElement('ul');
-            ul.appendChild(newLi);
-            elements.cvDocumentCanvas.appendChild(ul);
+        // Smart section detection: find the Experience/Employment section and insert there
+        let targetUl = null;
+        const headings = elements.cvDocumentCanvas.querySelectorAll('h2, h3');
+        for (const heading of headings) {
+            const txt = (heading.textContent || '').toUpperCase();
+            if (txt.includes('EXPERIENCE') || txt.includes('EMPLOYMENT') ||
+                txt.includes('WORK HISTORY') || txt.includes('CAREER')) {
+                let sibling = heading.nextElementSibling;
+                while (sibling) {
+                    if (sibling.tagName === 'UL') { targetUl = sibling; break; }
+                    if (sibling.tagName === 'H2' && sibling !== heading) break;
+                    sibling = sibling.nextElementSibling;
+                }
+                if (targetUl) break;
+            }
         }
 
-        // Close modal
+        if (targetUl) {
+            targetUl.insertBefore(newLi, targetUl.firstChild);
+        } else {
+            const lis = elements.cvDocumentCanvas.querySelectorAll('li');
+            if (lis.length > 0) {
+                lis[0].parentNode.insertBefore(newLi, lis[0].nextSibling);
+            } else {
+                const ul = document.createElement('ul');
+                ul.appendChild(newLi);
+                elements.cvDocumentCanvas.appendChild(ul);
+            }
+        }
+
         elements.keywordQaModal.classList.add('hidden');
-
-        // Scroll to inserted item
         newLi.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-        // Recalculate word count & ATS score
         updateWordAndCharCount();
         triggerDebouncedAnalysis();
     }
@@ -1030,18 +1102,44 @@
         const file = e.target.files[0];
         if (!file) return;
 
-        const isDocx = file.name.endsWith('.docx');
-        const isPdf = file.name.endsWith('.pdf');
-        const fileType = isDocx ? 'docx' : (isPdf ? 'pdf' : 'doc');
+        // Enforce PDF / Word only — reject other formats gracefully
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        if (!['pdf', 'docx', 'doc'].includes(ext)) {
+            showToast('Only PDF and Word (.docx / .doc) files are supported.', 'error');
+            e.target.value = '';
+            return;
+        }
+
+        const isDocx = (ext === 'docx');
+        const isPdf = (ext === 'pdf');
+        const fileType = isPdf ? 'pdf' : (isDocx ? 'docx' : 'doc');
 
         applyDocumentTheme(fileType, file.name);
         elements.docTypeBadge.textContent = `Extracting ${file.name}...`;
+        elements.docTypeBadge.classList.add('loading');
 
-        // Create local preview blob URL immediately so split view works without waiting
+        // Reset stored originals for this new upload
+        state.originalLoadedHtml = '';
+        state.originalBlobUrl = '';
+
+        // Create blob URL immediately
         const localBlobUrl = URL.createObjectURL(file);
-        setOriginalPreview(localBlobUrl, file.name);
 
-        // Client-side quick conversion for DOCX with Mammoth if available
+        if (isPdf) {
+            // PDFs: show the actual file in the preview pane right away via blob URL
+            state.originalBlobUrl = localBlobUrl;
+            _showPdfInIframe(localBlobUrl);
+            if (elements.previewDocName) elements.previewDocName.textContent = file.name;
+            if (elements.previewOpenTabLink) {
+                elements.previewOpenTabLink.href = localBlobUrl;
+                elements.previewOpenTabLink.style.display = 'inline-flex';
+            }
+        } else {
+            // DOCX/DOC: show formatted HTML sheet preview
+            setOriginalPreview(localBlobUrl, file.name);
+        }
+
+        // Client-side DOCX → rich HTML with Mammoth.js
         let clientHtml = null;
         if (isDocx && window.mammoth) {
             try {
@@ -1050,9 +1148,14 @@
                 if (result && result.value && result.value.trim().length > 30) {
                     clientHtml = result.value;
                     renderCvInCanvas(clientHtml, true);
+                    state.originalLoadedHtml = clientHtml;
+                    if (elements.originalDocSheet) {
+                        elements.originalDocSheet.innerHTML = clientHtml;
+                        elements.originalDocSheet.className = 'doc-paper-sheet doc-style-word readonly-sheet';
+                    }
                 }
             } catch (mErr) {
-                console.warn('Client mammoth conversion note:', mErr);
+                console.warn('Mammoth DOCX conversion note:', mErr);
             }
         }
 
@@ -1069,29 +1172,46 @@
                 body: formData
             });
 
-            if (!res.ok) throw new Error('Failed to extract text from document');
+            if (!res.ok) throw new Error(`Server returned ${res.status}`);
             const data = await res.json();
 
             state.activeResumeType = data.file_type || fileType;
-            const previewHtml = (data.html && data.html.trim().length > 30) ? data.html : (clientHtml || '');
-            setOriginalPreview(data.raw_url || localBlobUrl, file.name, previewHtml, data.text || '');
+            const backendHtml = (data.html && data.html.trim().length > 30) ? data.html : '';
+            const finalHtml = backendHtml || clientHtml || '';
 
-            // Prefer rich HTML from backend or mammoth
-            if (previewHtml) {
-                renderCvInCanvas(previewHtml, true);
+            // Update DOCX original sheet with best available HTML
+            if (!isPdf) {
+                if (backendHtml && !state.originalLoadedHtml) {
+                    state.originalLoadedHtml = backendHtml;
+                }
+                setOriginalPreview(localBlobUrl, file.name, state.originalLoadedHtml, data.text || '');
+            }
+
+            if (finalHtml) {
+                renderCvInCanvas(finalHtml, true);
             } else {
                 renderCvInCanvas(data.text || '', false);
             }
 
+            // Capture canvas as original snapshot if none was set above
+            if (!state.originalLoadedHtml && elements.cvDocumentCanvas) {
+                state.originalLoadedHtml = elements.cvDocumentCanvas.innerHTML;
+            }
+
             elements.docTypeBadge.textContent = file.name;
+            elements.docTypeBadge.classList.remove('loading');
+            showToast(`"${file.name}" loaded successfully.`, 'success');
             await analyzeCvContent();
 
         } catch (err) {
-            console.error('File reading error:', err);
-            alert(`File reading error: ${err.message}`);
+            console.error('File upload error:', err);
+            showToast(`Upload error: ${err.message}`, 'error');
+            elements.docTypeBadge.classList.remove('loading');
             if (!clientHtml) {
                 elements.docTypeBadge.textContent = 'Civil Service Template';
             }
+        } finally {
+            e.target.value = '';
         }
     }
 
@@ -1230,7 +1350,9 @@
         elements.exportMenu.classList.add('hidden');
         const plain = getCanvasPlainText();
         navigator.clipboard.writeText(plain).then(() => {
-            alert('CV text copied to clipboard!');
+            showToast('CV text copied to clipboard!', 'success');
+        }).catch(() => {
+            showToast('Could not copy — please select the text manually.', 'error');
         });
     }
 
@@ -1409,7 +1531,9 @@
         // Tab 2: Statement
         elements.generateStatementBtn.addEventListener('click', handleGeneratePersonalStatement);
         elements.copyStatementBtn.addEventListener('click', () => {
-            navigator.clipboard.writeText(elements.statementOutputText.value).then(() => alert('Personal statement copied!'));
+            navigator.clipboard.writeText(elements.statementOutputText.value)
+                .then(() => showToast('Personal statement copied!', 'success'))
+                .catch(() => showToast('Could not copy — please select manually.', 'error'));
         });
         elements.downloadStatementBtn.addEventListener('click', () => {
             downloadTextFile(elements.statementOutputText.value, `Personal_Statement_${state.jobRef}.txt`);
@@ -1418,7 +1542,9 @@
         // Tab 3: Cover Letter
         elements.generateCoverLetterBtn.addEventListener('click', handleGenerateCoverLetter);
         elements.copyLetterBtn.addEventListener('click', () => {
-            navigator.clipboard.writeText(elements.letterOutputText.value).then(() => alert('Cover letter copied!'));
+            navigator.clipboard.writeText(elements.letterOutputText.value)
+                .then(() => showToast('Cover letter copied!', 'success'))
+                .catch(() => showToast('Could not copy — please select manually.', 'error'));
         });
         elements.downloadLetterBtn.addEventListener('click', () => {
             downloadTextFile(elements.letterOutputText.value, `Cover_Letter_${state.jobRef}.txt`);
@@ -1459,6 +1585,28 @@
         const div = document.createElement('div');
         div.textContent = str;
         return div.innerHTML;
+    }
+
+    // ==========================================
+    // Toast Notification System
+    // ==========================================
+
+    function showToast(message, type = 'info', duration = 3000) {
+        const container = document.getElementById('toastContainer');
+        if (!container) return;
+        const icons = { success: '\u2705', error: '\u26d4', info: '\u2139\ufe0f', warning: '\u26a0\ufe0f' };
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span><span>${escapeHtml(message)}</span>`;
+        container.appendChild(toast);
+        setTimeout(() => {
+            toast.style.animation = 'toastOut 0.35s ease forwards';
+            setTimeout(() => { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 350);
+        }, duration);
+        toast.addEventListener('click', () => {
+            toast.style.animation = 'toastOut 0.2s ease forwards';
+            setTimeout(() => { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 200);
+        });
     }
 
     // Start on DOM ready
