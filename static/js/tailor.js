@@ -125,10 +125,14 @@
 
         // Tab 2: Personal Statement
         statementWordCountSelect: document.getElementById('statementWordCountSelect'),
-        behavioursCheckboxes: document.getElementById('behavioursCheckboxes'),
+        statementAdditionalNotes: document.getElementById('statementAdditionalNotes'),
         generateStatementBtn: document.getElementById('generateStatementBtn'),
+        generateStatementBtnText: document.getElementById('generateStatementBtnText'),
+        regenerateStatementBtn: document.getElementById('regenerateStatementBtn'),
         statementOutputText: document.getElementById('statementOutputText'),
         statementActualWords: document.getElementById('statementActualWords'),
+        statementStatusBadge: document.getElementById('statementStatusBadge'),
+        copyFinalOnlyBtn: document.getElementById('copyFinalOnlyBtn'),
         copyStatementBtn: document.getElementById('copyStatementBtn'),
         downloadStatementBtn: document.getElementById('downloadStatementBtn'),
 
@@ -298,6 +302,9 @@
 
             // Run initial ATS analysis
             await analyzeCvContent();
+
+            // Check if personal statement was previously generated and saved
+            await checkSavedPersonalStatement();
 
         } catch (error) {
             console.error('Failed to load advert:', error);
@@ -1001,52 +1008,141 @@
     }
 
     // ==========================================
-    // Personal Statement Generator
+    // Personal Statement (UK Civil Service Assessor)
     // ==========================================
 
-    async function handleGeneratePersonalStatement() {
+    async function checkSavedPersonalStatement() {
+        const jobRef = state.jobRef || (state.jobData && state.jobData.reference_number);
+        if (!jobRef) return;
+        const resumeId = state.activeResumeId || 0;
+
+        try {
+            const res = await fetch(`/api/ai/personal-statement?job_reference=${encodeURIComponent(jobRef)}&resume_id=${resumeId}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.saved && data.result) {
+                elements.statementOutputText.value = data.result.statement;
+                elements.statementActualWords.textContent = data.result.word_count || 0;
+                if (data.result.target_words && elements.statementWordCountSelect) {
+                    elements.statementWordCountSelect.value = data.result.target_words;
+                }
+                if (data.result.additional_notes && elements.statementAdditionalNotes) {
+                    elements.statementAdditionalNotes.value = data.result.additional_notes;
+                }
+                if (elements.statementStatusBadge) {
+                    elements.statementStatusBadge.textContent = 'Saved Statement Loaded';
+                    elements.statementStatusBadge.style.display = 'inline-block';
+                }
+                if (elements.regenerateStatementBtn) {
+                    elements.regenerateStatementBtn.style.display = 'inline-flex';
+                }
+                if (elements.generateStatementBtnText) {
+                    elements.generateStatementBtnText.textContent = 'Regenerate Statement';
+                }
+            } else {
+                if (elements.statementStatusBadge) {
+                    elements.statementStatusBadge.style.display = 'none';
+                }
+                if (elements.regenerateStatementBtn) {
+                    elements.regenerateStatementBtn.style.display = 'none';
+                }
+                if (elements.generateStatementBtnText) {
+                    elements.generateStatementBtnText.textContent = 'Generate Personal Statement';
+                }
+            }
+        } catch (err) {
+            console.warn('Failed to check saved personal statement:', err);
+        }
+    }
+
+    async function handleGeneratePersonalStatement(isRegenerate = false) {
         if (!state.jobData) return;
 
         const targetWords = parseInt(elements.statementWordCountSelect.value, 10) || 750;
-        const selectedBehaviours = [];
-        elements.behavioursCheckboxes.querySelectorAll('input:checked').forEach(cb => {
-            selectedBehaviours.push(cb.value);
-        });
+        const notes = elements.statementAdditionalNotes ? elements.statementAdditionalNotes.value.trim() : '';
+        const jobRef = state.jobRef || (state.jobData && state.jobData.reference_number) || '';
+        const resumeId = state.activeResumeId || 0;
 
+        // UI busy states
         elements.generateStatementBtn.disabled = true;
-        elements.generateStatementBtn.innerHTML = '<div class="spinner"></div> Drafting Personal Statement with Success Profiles...';
-        elements.statementOutputText.value = 'Analyzing your CV and structuring Evidence using Situation, Task, Action, Result (STAR)...';
+        if (elements.regenerateStatementBtn) elements.regenerateStatementBtn.disabled = true;
+
+        if (isRegenerate && elements.regenerateStatementBtn) {
+            elements.regenerateStatementBtn.innerHTML = '<div class="spinner" style="width:12px;height:12px;display:inline-block;"></div> Calling OpenAI...';
+        }
+        elements.generateStatementBtn.innerHTML = '<div class="spinner"></div> Evaluating Vacancy & Evidence with OpenAI...';
+        elements.statementOutputText.value = 'Analyzing Job Advert and CV against Essential Criteria, performing evidence mapping, and compiling Statement of Suitability...';
 
         try {
             const res = await fetch('/api/ai/personal-statement', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    job_reference: jobRef,
+                    resume_id: resumeId,
+                    cv_name: elements.docTypeBadge ? elements.docTypeBadge.textContent : '',
                     cv_text: getCanvasPlainText(),
                     job_data: state.jobData,
                     target_words: targetWords,
-                    focus_behaviours: selectedBehaviours,
+                    additional_notes: notes,
                     api_key: state.aiApiKey,
-                    provider: state.aiProvider
+                    provider: state.aiProvider || 'openai',
+                    regenerate: isRegenerate
                 })
             });
 
-            if (!res.ok) throw new Error('Personal statement generation failed');
             const data = await res.json();
+            if (!res.ok) {
+                const errorMsg = data.detail || 'Personal statement generation failed';
+                throw new Error(errorMsg);
+            }
+
             elements.statementOutputText.value = data.result.statement;
-            elements.statementActualWords.textContent = data.result.word_count;
+            elements.statementActualWords.textContent = data.result.word_count || 0;
+
+            if (elements.statementStatusBadge) {
+                elements.statementStatusBadge.textContent = data.cached ? 'Saved Statement Loaded' : 'Generated via OpenAI';
+                elements.statementStatusBadge.style.display = 'inline-block';
+            }
+            if (elements.regenerateStatementBtn) {
+                elements.regenerateStatementBtn.style.display = 'inline-flex';
+            }
+            if (elements.generateStatementBtnText) {
+                elements.generateStatementBtnText.textContent = 'Regenerate Statement';
+            }
+
+            if (data.cached) {
+                showToast('Loaded saved statement from database', 'info');
+            } else {
+                showToast('Personal statement generated and saved!', 'success');
+            }
 
         } catch (e) {
             console.error('Statement error:', e);
-            elements.statementOutputText.value = `Error drafting statement: ${e.message}. Please verify API settings.`;
+            if (e.message.toLowerCase().includes('api key')) {
+                elements.statementOutputText.value = `⚠️ OpenAI API Key Required\n\n${e.message}\n\nPlease click the Settings (gear icon) in the header to enter your OpenAI API key (sk-...), then try again.`;
+                showToast('OpenAI API key required — check AI settings', 'error');
+            } else {
+                elements.statementOutputText.value = `Error generating personal statement: ${e.message}`;
+                showToast(e.message, 'error');
+            }
         } finally {
             elements.generateStatementBtn.disabled = false;
             elements.generateStatementBtn.innerHTML = `
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
                 </svg>
-                <span>Generate Tailored Personal Statement</span>
+                <span id="generateStatementBtnText">${elements.regenerateStatementBtn && elements.regenerateStatementBtn.style.display !== 'none' ? 'Regenerate Statement' : 'Generate Personal Statement'}</span>
             `;
+            if (elements.regenerateStatementBtn) {
+                elements.regenerateStatementBtn.disabled = false;
+                elements.regenerateStatementBtn.innerHTML = `
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                    </svg>
+                    <span>Regenerate</span>
+                `;
+            }
         }
     }
 
@@ -1497,6 +1593,7 @@
                         }
                         elements.docTypeBadge.textContent = rData.filename;
                         await analyzeCvContent();
+                        await checkSavedPersonalStatement();
                     }
                 } catch (err) {
                     console.error('Failed to load resume content:', err);
@@ -1529,10 +1626,26 @@
         elements.qaInsertIntoCvBtn.addEventListener('click', insertSuggestedBulletIntoCv);
 
         // Tab 2: Statement
-        elements.generateStatementBtn.addEventListener('click', handleGeneratePersonalStatement);
+        elements.generateStatementBtn.addEventListener('click', () => handleGeneratePersonalStatement(false));
+        if (elements.regenerateStatementBtn) {
+            elements.regenerateStatementBtn.addEventListener('click', () => handleGeneratePersonalStatement(true));
+        }
+        if (elements.copyFinalOnlyBtn) {
+            elements.copyFinalOnlyBtn.addEventListener('click', () => {
+                const fullText = elements.statementOutputText.value;
+                let statementOnly = fullText;
+                const match = fullText.match(/C\.\s*FINAL PERSONAL STATEMENT\s*([\s\S]*?)(?=D\.\s*WORD COUNT|$)/i);
+                if (match && match[1].trim()) {
+                    statementOnly = match[1].trim();
+                }
+                navigator.clipboard.writeText(statementOnly)
+                    .then(() => showToast('Final personal statement copied!', 'success'))
+                    .catch(() => showToast('Could not copy — please select manually.', 'error'));
+            });
+        }
         elements.copyStatementBtn.addEventListener('click', () => {
             navigator.clipboard.writeText(elements.statementOutputText.value)
-                .then(() => showToast('Personal statement copied!', 'success'))
+                .then(() => showToast('Full assessment and personal statement copied!', 'success'))
                 .catch(() => showToast('Could not copy — please select manually.', 'error'));
         });
         elements.downloadStatementBtn.addEventListener('click', () => {

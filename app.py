@@ -6,6 +6,7 @@ import secrets
 import logging
 from datetime import datetime
 import re
+import hashlib
 from html import escape as html_escape
 from typing import Any, Dict, List, Optional
 from fastapi import (
@@ -1076,12 +1077,17 @@ class AIIntegrateRequest(BaseModel):
 
 
 class AIPersonalStatementRequest(BaseModel):
+    job_reference: Optional[str] = None
+    resume_id: Optional[int] = None
+    cv_name: Optional[str] = None
     cv_text: str
     job_data: Dict
+    additional_notes: Optional[str] = None
     target_words: Optional[int] = 750
     focus_behaviours: Optional[List[str]] = None
     api_key: Optional[str] = None
     provider: Optional[str] = "openai"
+    regenerate: Optional[bool] = False
 
 
 class AICoverLetterRequest(BaseModel):
@@ -1184,18 +1190,126 @@ async def integrate_keyword(request: AIIntegrateRequest):
     return {"status": "success", "suggestion": res}
 
 
-@app.post("/api/ai/personal-statement")
-async def generate_statement(request: AIPersonalStatementRequest):
-    """Generate Civil Service Success Profiles Personal Statement."""
-    res = ai_service.generate_personal_statement(
-        cv_text=request.cv_text,
-        job_data=request.job_data,
-        target_words=request.target_words or 750,
-        focus_behaviours=request.focus_behaviours,
-        api_key=request.api_key,
-        provider=request.provider or "openai"
+@app.get("/api/ai/personal-statement")
+async def get_saved_statement(
+    job_reference: str,
+    resume_id: Optional[int] = 0,
+    cv_hash: Optional[str] = "",
+    user: Optional[Dict] = Depends(get_optional_user)
+):
+    """Retrieve previously saved Civil Service Personal Statement for a specific job advert and CV."""
+    user_id = user["id"] if user else 0
+    saved = database.get_personal_statement(
+        job_reference=job_reference,
+        resume_id=resume_id or 0,
+        cv_hash=cv_hash or "",
+        user_id=user_id
     )
-    return {"status": "success", "result": res}
+    if not saved and user_id != 0:
+        saved = database.get_personal_statement(
+            job_reference=job_reference,
+            resume_id=resume_id or 0,
+            cv_hash=cv_hash or "",
+            user_id=0
+        )
+    if saved:
+        return {
+            "status": "success",
+            "saved": True,
+            "result": {
+                "statement": saved["statement_text"],
+                "word_count": saved["word_count"],
+                "target_words": saved["target_words"],
+                "additional_notes": saved.get("additional_notes", ""),
+                "model_used": saved.get("model_used", "openai"),
+                "updated_at": saved.get("updated_at", "")
+            }
+        }
+    return {"status": "success", "saved": False, "result": None}
+
+
+@app.post("/api/ai/personal-statement")
+async def generate_statement(
+    request: AIPersonalStatementRequest,
+    user: Optional[Dict] = Depends(get_optional_user)
+):
+    """
+    Generate or retrieve tailored UK Civil Service Personal Statement / Statement of Suitability.
+    Saves statements per job advert and CV to the database table.
+    Only executes OpenAI API calls if no saved statement exists or if regenerate=True.
+    """
+    user_id = user["id"] if user else 0
+    job_ref = request.job_reference or request.job_data.get("reference_number", "")
+    resume_id = request.resume_id or 0
+    cv_text_clean = (request.cv_text or "").strip()
+    cv_hash = hashlib.md5(cv_text_clean.encode("utf-8")).hexdigest()[:16] if cv_text_clean else ""
+    cv_name = request.cv_name or ""
+
+    # Check for existing saved statement if not explicitly regenerating
+    if not request.regenerate and job_ref:
+        saved = database.get_personal_statement(
+            job_reference=job_ref,
+            resume_id=resume_id,
+            cv_hash=cv_hash,
+            user_id=user_id
+        )
+        if not saved and user_id != 0:
+            saved = database.get_personal_statement(
+                job_reference=job_ref,
+                resume_id=resume_id,
+                cv_hash=cv_hash,
+                user_id=0
+            )
+        if saved:
+            return {
+                "status": "success",
+                "cached": True,
+                "result": {
+                    "statement": saved["statement_text"],
+                    "word_count": saved["word_count"],
+                    "target_words": saved["target_words"],
+                    "additional_notes": saved.get("additional_notes", ""),
+                    "model_used": saved.get("model_used", "openai"),
+                    "updated_at": saved.get("updated_at", "")
+                }
+            }
+
+    # Generate via AI service calling OpenAI API with specified assessor prompt
+    try:
+        res = ai_service.generate_personal_statement(
+            cv_text=request.cv_text,
+            job_data=request.job_data,
+            target_words=request.target_words or 750,
+            additional_notes=request.additional_notes,
+            focus_behaviours=request.focus_behaviours,
+            api_key=request.api_key,
+            provider=request.provider or "openai"
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate personal statement: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Save to personal_statements table
+    if job_ref and res.get("statement"):
+        try:
+            saved_record = database.save_personal_statement(
+                job_reference=job_ref,
+                resume_id=resume_id,
+                user_id=user_id,
+                cv_hash=cv_hash,
+                cv_name=cv_name,
+                statement_text=res["statement"],
+                word_count=res.get("word_count", 0),
+                target_words=request.target_words or 750,
+                additional_notes=request.additional_notes or "",
+                model_used=res.get("model_used", "openai")
+            )
+            res["saved"] = True
+            res["updated_at"] = saved_record.get("updated_at")
+        except Exception as db_err:
+            logger.warning(f"Failed to persist personal statement to database: {db_err}")
+
+    return {"status": "success", "cached": False, "result": res}
 
 
 @app.post("/api/ai/cover-letter")

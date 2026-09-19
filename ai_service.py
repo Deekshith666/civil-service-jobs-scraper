@@ -124,22 +124,24 @@ class AIService:
 
         return "offline", None
 
-    def _call_openai(self, system_prompt: str, user_prompt: str, api_key: str, model: str = "gpt-4o-mini") -> str:
+    def _call_openai(self, system_prompt: str, user_prompt: str, api_key: str, model: Optional[str] = None) -> str:
         """Execute request to OpenAI Chat Completions API."""
+        chosen_model = model or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
         url = "https://api.openai.com/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         data = {
-            "model": model,
+            "model": chosen_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "temperature": 0.6
+            "temperature": 0.6,
+            "max_tokens": 4000
         }
-        res = requests.post(url, headers=headers, json=data, timeout=45)
+        res = requests.post(url, headers=headers, json=data, timeout=90)
         if res.status_code != 200:
             err_msg = res.json().get("error", {}).get("message", res.text)
             raise ValueError(f"OpenAI API Error ({res.status_code}): {err_msg}")
@@ -507,91 +509,360 @@ class AIService:
         }
 
     # ==========================================
-    # Personal Statement Generator (Success Profiles)
+    # Personal Statement Generator (UK Civil Service Assessor)
     # ==========================================
+
+    def format_full_job_advert(self, job_data: Dict) -> str:
+        """Construct comprehensive, untruncated Civil Service vacancy details and criteria."""
+        lines = []
+        title = job_data.get("title") or "Civil Service Position"
+        dept = job_data.get("department") or "HM Government"
+        ref = job_data.get("reference_number") or ""
+        lines.append(f"JOB TITLE: {title}")
+        lines.append(f"DEPARTMENT: {dept}")
+        if ref:
+            lines.append(f"REFERENCE NUMBER: {ref}")
+        if job_data.get("location"):
+            lines.append(f"LOCATION: {job_data['location']}")
+        if job_data.get("salary"):
+            lines.append(f"SALARY: {job_data['salary']}")
+        if job_data.get("job_grade"):
+            lines.append(f"GRADE: {job_data['job_grade']}")
+        if job_data.get("contract_type"):
+            lines.append(f"CONTRACT TYPE: {job_data['contract_type']}")
+        if job_data.get("working_pattern"):
+            lines.append(f"WORKING PATTERN: {job_data['working_pattern']}")
+        if job_data.get("role_type"):
+            lines.append(f"ROLE TYPE: {job_data['role_type']}")
+
+        if job_data.get("job_summary"):
+            lines.append(f"\n--- JOB SUMMARY ---\n{job_data['job_summary']}")
+        if job_data.get("job_description"):
+            lines.append(f"\n--- JOB DESCRIPTION & RESPONSIBILITIES ---\n{job_data['job_description']}")
+        if job_data.get("person_specification"):
+            lines.append(f"\n--- PERSON SPECIFICATION (ESSENTIAL & DESIRABLE CRITERIA) ---\n{job_data['person_specification']}")
+        if job_data.get("behaviours"):
+            lines.append(f"\n--- CIVIL SERVICE BEHAVIOURS ---\n{job_data['behaviours']}")
+        if job_data.get("technical_skills"):
+            lines.append(f"\n--- TECHNICAL SKILLS ---\n{job_data['technical_skills']}")
+        if job_data.get("selection_process"):
+            lines.append(f"\n--- SELECTION PROCESS & SIFT DETAILS ---\n{job_data['selection_process']}")
+
+        all_fields = job_data.get("all_fields") or {}
+        for k, v in all_fields.items():
+            k_lower = str(k).lower().strip()
+            if k_lower not in [
+                "job summary", "job description", "person specification", "behaviours",
+                "technical skills", "selection process details", "type of role", "working pattern",
+                "contract type", "job grade", "job title", "department", "salary", "location"
+            ]:
+                if isinstance(v, str) and v.strip():
+                    lines.append(f"\n--- {k.upper()} ---\n{v.strip()}")
+
+        if not job_data.get("job_description") and not job_data.get("person_specification"):
+            desc = job_data.get("description") or ""
+            if desc.strip():
+                lines.append(f"\n--- VACANCY DETAILS ---\n{desc.strip()}")
+
+        return "\n".join(lines)
 
     def generate_personal_statement(
         self,
         cv_text: str,
         job_data: Dict,
         target_words: int = 750,
+        additional_notes: Optional[str] = None,
         focus_behaviours: Optional[List[str]] = None,
         api_key: Optional[str] = None,
         provider: str = "openai"
     ) -> Dict:
         """
-        Generate a bespoke Civil Service Personal Statement adhering to Success Profiles.
-        Uses STAR methodology (Situation, Task, Action, Result) and avoids AI clichés.
+        Generate a bespoke UK Civil Service Personal Statement / Statement of Suitability
+        using OpenAI API with rigorous UK recruitment assessor guidelines and strict evidence mapping.
         """
-        title = job_data.get("title", "Civil Service Position")
-        dept = job_data.get("department", "HM Government")
-        desc = job_data.get("description", "")[:1500]
-        behaviours = focus_behaviours or ["Making Effective Decisions", "Delivering at Pace", "Communicating and Influencing"]
+        resolved_provider, resolved_key = self._get_api_config(api_key, provider)
+        if not resolved_key or resolved_provider == "offline":
+            raise ValueError(
+                "OpenAI API key is required to generate this Civil Service Personal Statement. "
+                "Please configure OPENAI_API_KEY in .env or provide your API key in the AI Settings dialog."
+            )
+
+        full_job_advert = self.format_full_job_advert(job_data)
+        cv_content = cv_text.strip() if cv_text and cv_text.strip() else DEFAULT_CV_TEMPLATE
+        extra_examples = additional_notes.strip() if additional_notes and additional_notes.strip() else "None provided."
+
+        word_limit_guidance = (
+            f"If the vacancy states an exact word limit (e.g., 500, 750, 1000, or 1250 words), write to that limit. "
+            f"Otherwise, write to the candidate's target limit of approximately {target_words} words."
+        )
 
         system_prompt = (
-            "You are a Senior Civil Service Recruitment Assessor and expert application writer. "
-            "Write an exceptional, humanized Civil Service Personal Statement for the candidate based strictly on their CV. "
-            "STRICT GUIDELINES:\n"
-            "1. Adhere to the UK Civil Service Success Profiles framework (Experience, Behaviours, Strengths, Technical Skills).\n"
-            "2. Structure evidence using the STAR approach (Situation, Task, Action, Result) with clear metrics where available in the CV.\n"
-            "3. NO AI CLICHÉS: Never use words like 'testament', 'tapestry', 'delve', 'beacon', 'pivotal role', 'in today's world'.\n"
-            "4. Tone: Confident, professional, objective British public sector English.\n"
-            f"5. Word Count Target: Approximately {target_words} words (stay within +/- 10%).\n"
-            f"6. Integrate key behaviours: {', '.join(behaviours)}."
+            "You are an expert UK Civil Service application writer and recruitment assessor. "
+            "You write highly targeted Statements of Suitability adhering strictly to Civil Service Success Profiles. "
+            "Never invent experience, never fabricate evidence, and strictly avoid generic AI clichés."
         )
 
-        user_prompt = (
-            f"Job Title: {title}\n"
-            f"Department: {dept}\n"
-            f"Job Context / Essential Criteria:\n{desc}\n\n"
-            f"Candidate CV:\n{cv_text[:3000]}\n\n"
-            f"Write the Personal Statement now with clear section headers aligned to the essential criteria and key behaviours."
-        )
+        user_prompt = f"""You are an expert UK Civil Service application writer and recruitment assessor.
 
-        llm_reply = self.query_llm(system_prompt, user_prompt, api_key, provider)
-        if llm_reply:
-            cleaned = clean_humanized_text(llm_reply)
-            word_count = len(cleaned.split())
-            return {
-                "statement": cleaned,
-                "word_count": word_count,
-                "target_words": target_words,
-                "engine": "llm"
-            }
+You already have
+1. The full Job Description / vacancy advert.
+2. My CV.
+3. Optional additional examples or notes about my experience.
 
-        # Offline High-Quality Civil Service Template Generator
-        statement_text = f"""## STATEMENT OF SUITABILITY: {title.upper()}
-### {dept.upper()}
+Your task is to create a highly targeted Personal Statement / Statement of Suitability for this specific vacancy.
 
-### Introduction & Motivation
-I am writing to express my strong interest in the {title} role within {dept}. With a proven track record in operational delivery, stakeholder communication, and continuous service improvement, I offer directly transferable skills and a commitment to upholding the Civil Service core values of integrity, honesty, objectivity, and impartiality.
+IMPORTANT RULES
 
-### Evidence of Essential Criteria & Technical Competence
-Throughout my professional career, I have consistently taken ownership of high-volume, complex operational workflows while adhering to strict governance standards. In my recent roles, I have:
-- Managed operational performance, consistently exceeding delivery targets while maintaining a 96% accuracy and compliance rate.
-- Conducted regular procedural audits to proactively identify service bottlenecks and implement effective, practical solutions.
-- Built collaborative working relationships with cross-functional teams, technical specialists, and external partners to deliver seamless public services.
+* Do not invent, exaggerate, or assume experience that I have not provided.
+* Every claim must be supported by evidence from my CV or additional information I provide.
+* If an essential criterion is not clearly evidenced, identify the gap rather than fabricating evidence.
+* Focus primarily on the criteria actually being assessed for the Personal Statement.
+* Do not automatically write generic Civil Service Behaviour examples unless the vacancy specifically says the Personal Statement is assessed against those behaviours.
+* Prioritise Essential Criteria over Desirable Criteria.
+* Use the terminology from the job advert naturally, but do not copy large sections word-for-word.
+* Avoid generic AI-style phrases such as:
 
-### Civil Service Behaviours Evidence
+  * "I am writing to express my strong interest"
+  * "I am passionate about"
+  * "dynamic professional"
+  * "proven track record"
+  * "fostering collaboration"
+  * "leveraging my skills"
+  * "I would welcome the opportunity"
+    unless genuinely useful.
+* Do not waste the word count describing the organisation or repeating the job description.
+* Concentrate on what I personally did, how I did it, the technologies/processes I used, and what outcome I achieved.
+* Prefer specific evidence, metrics, scale, complexity and outcomes wherever available.
+* Write in natural professional British English.
+* The final statement should sound like an experienced human applicant, not AI-generated corporate language.
 
-#### 1. Making Effective Decisions
-In my previous position, our team faced unexpected delays in service dispatch due to legacy process handovers. I analyzed intake data across 300+ casework files, identified the recurring failure points, and developed a revised risk-triage framework. By presenting evidence-based recommendations to department leadership, we streamlined approvals and reduced end-to-end turnaround time by 28% without compromising statutory compliance.
+STEP 1 — ANALYSE THE VACANCY
 
-#### 2. Delivering at Pace
-When tasked with meeting aggressive departmental milestone targets under constrained resources, I implemented daily progress tracking and reprioritized high-impact tasks. By maintaining clear focus on key deliverables and fostering team resilience, our unit successfully delivered all required outcomes two weeks ahead of the statutory deadline while sustaining high team morale.
+Before writing the statement, analyse the Job Description and identify:
 
-#### 3. Communicating and Influencing
-Effective public service relies upon clear, transparent communication. I have routinely translated complex technical guidelines and operational updates into concise, accessible guidance for diverse operational teams and service users. During a cross-departmental transition, I led briefing sessions that unified expectations, resolved procedural discrepancies, and secured unanimous stakeholder buy-in.
+* Job purpose
+* Main responsibilities
+* Essential criteria
+* Desirable criteria
+* Technical skills
+* Experience requirements
+* Civil Service Behaviours, if applicable
+* Success Profiles elements being assessed
+* Any qualifications/certifications
+* Any specific sift instructions
+* Personal Statement word limit ({word_limit_guidance})
+* Anything the advert says candidates MUST demonstrate
 
-### Conclusion
-I bring the requisite dedication, professional rigour, and problem-solving capability required to excel as {title} within {dept}. I welcome the opportunity to contribute towards your department's strategic goals and deliver outstanding outcomes for the public.
+Then create a priority list:
+
+CRITICAL:
+Criteria that are explicitly essential or likely to determine the sift.
+
+IMPORTANT:
+Criteria strongly relevant to the role but secondary to the critical requirements.
+
+DESIRABLE:
+Criteria that should only be included if space permits.
+
+STEP 2 — MAP MY EXPERIENCE
+
+Compare my CV/experience against every essential criterion.
+
+Create an internal evidence map containing:
+
+Criterion:
+Evidence from my experience:
+Specific example:
+My personal actions:
+Technology/tool/process used:
+Outcome/result:
+Strength of evidence: Strong / Moderate / Weak / Missing
+
+Do not write the final Personal Statement until you have completed this mapping.
+
+Where several examples exist, select the example that provides the strongest evidence for the vacancy.
+
+STEP 3 — IDENTIFY GAPS
+
+If any essential criterion has weak or missing evidence:
+
+* Do not invent experience.
+* Flag it clearly.
+* Where possible, identify genuine transferable experience from my CV.
+* If additional information from me could materially strengthen the statement, list the exact questions that would help.
+
+However, if sufficient information already exists to create a strong statement, continue without asking unnecessary questions.
+
+STEP 4 — WRITE THE PERSONAL STATEMENT
+
+Write the statement to the exact word limit stated in the vacancy.
+
+If the vacancy says "maximum 750 words", aim for approximately 700–745 words unless there is a good reason to be shorter.
+
+Structure the statement around the ESSENTIAL CRITERIA rather than generic headings.
+
+Use evidence in a concise STAR/CARE style where useful:
+
+Situation/Context — briefly establish the problem.
+Task — what I was responsible for.
+Action — the majority of the example; explain exactly what I personally did.
+Result — measurable or concrete outcome.
+
+Do not make every example sound mechanically like STAR.
+
+The Action section should receive the most emphasis.
+
+For technical roles, explicitly mention relevant technologies, for example:
+
+* AWS / Azure
+* Linux
+* Windows Server
+* Terraform / Infrastructure as Code
+* Git / GitLab / GitHub
+* CI/CD
+* GitLab runners
+* secrets management
+* Docker / Kubernetes
+* Bash / Python / PowerShell
+* networking
+* monitoring/logging
+* incident management
+* root-cause analysis
+* security
+* patching
+* vulnerability management
+* automation
+
+Only include technologies I have actually used.
+
+For each major criterion, demonstrate:
+
+WHAT I did
++
+HOW I did it
++
+WHY I made that decision
++
+WHAT RESULT it produced
+
+Strong example:
+
+"After identifying repeated deployment failures in our development environment, I reviewed the Linux application and web-server logs, checked service permissions and configuration, and traced the issue to..."
+
+Weak example:
+
+"I have excellent troubleshooting skills and extensive Linux experience."
+
+Always prefer the strong evidence-based style.
+
+STEP 5 — OPTIMISE FOR CIVIL SERVICE SIFTING
+
+Make it easy for a sift assessor to see evidence against each essential criterion.
+
+Use important terminology from the advert naturally so the relationship between my evidence and the criterion is obvious.
+
+Do not make assessors infer that I meet a criterion.
+
+For example, instead of:
+
+"I supported several application environments."
+
+Prefer:
+
+"I administered Linux-based application environments, troubleshooting Apache, application, permissions and networking issues and using system and application logs to identify root causes."
+
+Where appropriate, quantify:
+
+* number of systems/users
+* applications supported
+* incidents resolved
+* time saved
+* percentage improvement
+* deployment frequency
+* reduction in errors
+* turnaround time
+* uptime/reliability
+* project scale
+
+Only use numbers actually provided by me.
+
+STEP 6 — QUALITY CHECK
+
+Before returning the final statement, check:
+
+1. Does every essential criterion have evidence?
+2. Are my personal actions clear?
+3. Are technical claims supported by my experience?
+4. Are results/outcomes included?
+5. Is unnecessary motivational language removed?
+6. Is the statement within the stated word limit?
+7. Does it use British English?
+8. Does it avoid repetition?
+9. Does it sound natural rather than AI-generated?
+10. Could a Civil Service sift assessor quickly identify why I meet the Person Specification?
+
+OUTPUT FORMAT
+
+Provide:
+
+A. JOB REQUIREMENTS SUMMARY
+
+A concise table:
+
+Essential criterion | Evidence available | Evidence strength
+
+B. GAPS / RISKS
+
+Only mention genuine weaknesses that could affect the application.
+
+C. FINAL PERSONAL STATEMENT
+
+Provide a polished, submission-ready statement within the required word limit.
+
+D. WORD COUNT
+
+Give the exact approximate word count.
+
+E. FINAL SIFT CHECK
+
+For each essential criterion state where it is demonstrated in the Personal Statement.
+
+Do NOT give the application an artificial percentage score.
+
+Do NOT invent achievements.
+
+Do NOT change facts simply to make the application sound stronger.
+
+Here is the vacancy:
+
+{full_job_advert}
+
+Here is my CV:
+
+{cv_content}
+
+Additional experience/examples:
+
+{extra_examples}
 """
-        cleaned = clean_humanized_text(statement_text)
+
+        model_name = os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+        if resolved_provider == "openai":
+            raw_statement = self._call_openai(system_prompt, user_prompt, resolved_key, model=model_name)
+        elif resolved_provider == "gemini":
+            raw_statement = self._call_gemini(system_prompt, user_prompt, resolved_key)
+        else:
+            raise ValueError(f"Unsupported provider: {resolved_provider}")
+
+        cleaned = clean_humanized_text(raw_statement)
+        word_count = len(cleaned.split())
+
         return {
             "statement": cleaned,
-            "word_count": len(cleaned.split()),
+            "word_count": word_count,
             "target_words": target_words,
-            "engine": "smart_template"
+            "model_used": f"{resolved_provider}:{model_name}" if resolved_provider == "openai" else resolved_provider,
+            "engine": resolved_provider
         }
 
     # ==========================================

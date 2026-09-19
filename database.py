@@ -439,12 +439,33 @@ def init_users_db():
                 )
             """)
 
+            # Tailored Personal Statements per job advert and CV
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS personal_statements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER DEFAULT 0,
+                    job_reference TEXT NOT NULL,
+                    resume_id INTEGER DEFAULT 0,
+                    cv_hash TEXT DEFAULT '',
+                    cv_name TEXT DEFAULT '',
+                    statement_text TEXT NOT NULL,
+                    word_count INTEGER DEFAULT 0,
+                    target_words INTEGER DEFAULT 750,
+                    additional_notes TEXT DEFAULT '',
+                    model_used TEXT DEFAULT 'openai',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_resumes_user_id ON user_resumes(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(token)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_saved_jobs_user ON user_saved_jobs(user_id)")
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ps_job_resume ON personal_statements(job_reference, resume_id, user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ps_cv_hash ON personal_statements(job_reference, cv_hash, user_id)")
 
             # Auto-seed / Self-heal default users and resumes
             # 1. demo_applicant
@@ -1859,6 +1880,132 @@ def get_user_saved_job_references(user_id: int) -> List[str]:
         cursor = conn.cursor()
         cursor.execute("SELECT job_reference FROM user_saved_jobs WHERE user_id = ? ORDER BY saved_at DESC", (user_id,))
         return [r["job_reference"] for r in cursor.fetchall()]
+
+
+# ==========================================
+# Personal Statements (Per Advert & Per CV)
+# ==========================================
+
+def get_personal_statement(
+    job_reference: str,
+    resume_id: int = 0,
+    cv_hash: str = "",
+    user_id: int = 0
+) -> Optional[Dict]:
+    """Fetch saved personal statement for a specific job advert and CV."""
+    with get_users_db_connection() as conn:
+        cursor = conn.cursor()
+        # 1. Match by resume_id if available (> 0)
+        if resume_id and resume_id > 0:
+            cursor.execute(
+                """
+                SELECT * FROM personal_statements
+                WHERE job_reference = ? AND resume_id = ? AND user_id = ?
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (job_reference, resume_id, user_id)
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+
+        # 2. Match by cv_hash if available
+        if cv_hash:
+            cursor.execute(
+                """
+                SELECT * FROM personal_statements
+                WHERE job_reference = ? AND cv_hash = ? AND user_id = ?
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (job_reference, cv_hash, user_id)
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+
+        # 3. Fallback: match by job_reference and user_id
+        cursor.execute(
+            """
+            SELECT * FROM personal_statements
+            WHERE job_reference = ? AND user_id = ?
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            (job_reference, user_id)
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+
+        return None
+
+
+def save_personal_statement(
+    job_reference: str,
+    resume_id: int = 0,
+    user_id: int = 0,
+    cv_hash: str = "",
+    cv_name: str = "",
+    statement_text: str = "",
+    word_count: int = 0,
+    target_words: int = 750,
+    additional_notes: str = "",
+    model_used: str = "openai"
+) -> Dict:
+    """Save or update generated personal statement for a specific job advert and CV."""
+    now_iso = datetime.now().isoformat()
+    with get_users_db_connection() as conn:
+        cursor = conn.cursor()
+        # Check if record already exists for this (job_reference, resume_id, user_id)
+        cursor.execute(
+            """
+            SELECT id FROM personal_statements
+            WHERE job_reference = ? AND resume_id = ? AND user_id = ?
+            """,
+            (job_reference, resume_id, user_id)
+        )
+        existing = cursor.fetchone()
+
+        # If not found by resume_id but cv_hash exists, check by cv_hash
+        if not existing and cv_hash:
+            cursor.execute(
+                """
+                SELECT id FROM personal_statements
+                WHERE job_reference = ? AND cv_hash = ? AND user_id = ?
+                """,
+                (job_reference, cv_hash, user_id)
+            )
+            existing = cursor.fetchone()
+
+        if existing:
+            cursor.execute(
+                """
+                UPDATE personal_statements
+                SET cv_hash = ?, cv_name = ?, statement_text = ?, word_count = ?,
+                    target_words = ?, additional_notes = ?, model_used = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (cv_hash, cv_name, statement_text, word_count, target_words, additional_notes, model_used, now_iso, existing["id"])
+            )
+            conn.commit()
+            record_id = existing["id"]
+        else:
+            cursor.execute(
+                """
+                INSERT INTO personal_statements (
+                    user_id, job_reference, resume_id, cv_hash, cv_name,
+                    statement_text, word_count, target_words, additional_notes,
+                    model_used, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, job_reference, resume_id, cv_hash, cv_name,
+                 statement_text, word_count, target_words, additional_notes,
+                 model_used, now_iso, now_iso)
+            )
+            conn.commit()
+            record_id = cursor.lastrowid
+
+        cursor.execute("SELECT * FROM personal_statements WHERE id = ?", (record_id,))
+        return dict(cursor.fetchone())
 
 
 # Run initialization on import
