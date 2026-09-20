@@ -97,25 +97,47 @@ class AIService:
         pass
 
     def _get_api_config(self, user_key: Optional[str] = None, provider: str = "openai") -> Tuple[str, Optional[str]]:
-        """Resolve which AI provider and key to use."""
+        """Resolve which AI provider and key to use, automatically reading from .env if needed."""
         env_openai = os.getenv("OPENAI_API_KEY")
         env_gemini = os.getenv("GEMINI_API_KEY")
 
+        # Dynamically reload from .env if missing from process environment
+        if not env_openai or not env_gemini:
+            try:
+                from pathlib import Path
+                env_path = Path(__file__).resolve().parent / ".env"
+                if env_path.exists():
+                    with open(env_path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith("#") and "=" in line:
+                                k, v = line.split("=", 1)
+                                k = k.strip()
+                                v = v.strip().strip("'\"")
+                                if k:
+                                    os.environ[k] = v
+                    env_openai = os.getenv("OPENAI_API_KEY")
+                    env_gemini = os.getenv("GEMINI_API_KEY")
+            except Exception:
+                pass
+
+        user_clean_key = (user_key or "").strip()
+
         if provider == "gemini":
-            key = user_key or env_gemini
+            key = user_clean_key or env_gemini
             if key:
                 return "gemini", key
         elif provider == "openai":
-            key = user_key or env_openai
+            key = user_clean_key or env_openai
             if key:
                 return "openai", key
 
         # Fallback check if user didn't specify provider or key
-        if user_key:
-            if user_key.startswith("AIzaSy"):
-                return "gemini", user_key
+        if user_clean_key:
+            if user_clean_key.startswith("AIzaSy"):
+                return "gemini", user_clean_key
             else:
-                return "openai", user_key
+                return "openai", user_clean_key
 
         if env_openai:
             return "openai", env_openai
