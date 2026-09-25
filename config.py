@@ -34,6 +34,7 @@ IS_VERCEL = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
 DATABASE_URL = os.getenv("DATABASE_URL")
 TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL")
 TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
+PERSISTENT_DB_ENABLED = bool(DATABASE_URL or TURSO_DATABASE_URL)
 
 if IS_VERCEL:
     # On Vercel, the application bundle (/var/task) is mounted strictly read-only.

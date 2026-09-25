@@ -321,6 +321,12 @@ async def trigger_scrape(request: ScrapeRequest, background_tasks: BackgroundTas
             "message": "Live background scraping is disabled on Vercel Serverless Functions due to execution timeouts (10s limit). Please run scrapes locally (python main.py scrape) or via scheduled GitHub Actions."
         }
 
+    if config.IS_VERCEL and not config.PERSISTENT_DB_ENABLED:
+        return {
+            "status": "disabled",
+            "message": "Live sync is disabled on Vercel because no persistent database is configured. Set DATABASE_URL or TURSO_DATABASE_URL to enable durable job storage and live pushes."
+        }
+
     if active_scrape_state["is_running"]:
         return {"status": "busy", "message": "A scrape run is already in progress."}
 
@@ -401,6 +407,12 @@ async def sync_incoming_jobs(request: SyncJobsRequest, _auth: None = Depends(_ve
     Receive newly scraped jobs and sync directly into production database.
     Does not require Git push or Vercel redeployment.
     """
+    if not config.PERSISTENT_DB_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Live sync is unavailable because the app has no persistent database configured. Set DATABASE_URL or TURSO_DATABASE_URL in the production environment."
+        )
+
     if not request.jobs:
         return {
             "status": "success",

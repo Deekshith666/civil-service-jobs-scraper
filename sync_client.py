@@ -5,6 +5,7 @@ import time
 from typing import Dict, List, Optional
 import requests
 
+import config
 from config import LIVE_APP_URL, SYNC_API_KEY
 import database
 
@@ -19,6 +20,13 @@ def push_jobs_to_live(
     source: str = "scraper_cli",
     timeout: int = 25
 ) -> Dict:
+    if not config.PERSISTENT_DB_ENABLED and config.IS_VERCEL:
+        return {
+            "status": "disabled",
+            "message": "Live sync is disabled because no persistent database is configured. Set DATABASE_URL or TURSO_DATABASE_URL on Vercel to enable durable job storage.",
+            "synced_count": 0
+        }
+
     """
     Transmit a batch of job dictionaries to the live production sync endpoint.
     
